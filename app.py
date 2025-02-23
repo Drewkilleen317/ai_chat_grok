@@ -80,12 +80,15 @@ def create_chat(name, model=None, system_prompt=None):
         system_prompt = ss.default_system_prompt
         
     # Create new chat
+    current_time = time.time()
     new_chat = {
         "name": name,
         "model": model,
         "system_prompt": system_prompt,
         "messages": [],
-        "created_at": time.time()
+        "created_at": current_time,
+        "updated_at": current_time,
+        "archived": False
     }
     ss.db.chats.insert_one(new_chat)
     return new_chat
