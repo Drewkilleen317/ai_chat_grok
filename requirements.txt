@@ -1,0 +1,8 @@
+openai
+dotenv
+streamlit
+pymongo
+python-dotenv
+google-generativeai
+httpx
+requests
