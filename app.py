@@ -164,8 +164,21 @@ def manage_sidebar():
     st.sidebar.divider()
     
     st.sidebar.markdown("### :blue[Select Chat] 📚")
-    chat_names = ss.db.chats.distinct("name")
-    chats = list(ss.db.chats.find({}, {"name": 1, "created_at": 1}))
+    # Get active chats, excluding archived ones
+    active_chats = list(ss.db.chats.find(
+        {"archived": {"$ne": True}}, 
+        {"name": 1, "created_at": 1}
+    ))
+    
+    # Ensure Scratch Pad is always included and cannot be archived
+    scratch_pad = ss.db.chats.find_one({"name": "Scratch Pad"})
+    if scratch_pad:
+        active_chats.append(scratch_pad)
+        # Ensure Scratch Pad is not archived
+        scratch_pad["archived"] = False
+    
+    chat_names = [chat["name"] for chat in active_chats]
+    chats = active_chats
     
     col1, col2 = st.sidebar.columns([7, 1])
     with col1:
@@ -191,8 +204,8 @@ def manage_sidebar():
             if st.button("🧹", key="clear_current", help=f"Clear {ss.active_chat['name']} history"):
                 ss.active_chat["messages"] = []
                 ss.db.chats.update_one(
-                    {"name": ss.active_chat["name"]},
-                    {"$set": {"messages": ss.active_chat["messages"]}}
+                    {"_id": ss.active_chat["_id"]},
+                    {"$set": {"messages": []}}
                 )
                 st.rerun()
     
@@ -212,6 +225,24 @@ def manage_sidebar():
                     ss.active_chat = ss.db.chats.find_one({"name": "Scratch Pad"})
                     ss.active_model_name = ss.active_chat["model"]
                 st.rerun()
+
+def get_costs_from_response(grok_response, model_name):
+    # Extract usage data from the Grok response
+    usage = grok_response.get("usage", {})
+    prompt_tokens = usage.get("prompt_tokens", 0)
+    completion_tokens = usage.get("completion_tokens", 0)
+
+    # Retrieve model pricing from the database
+    model = ss.db.models.find_one({"name": model_name})
+    input_price_per_million = model.get("input_price", 0)
+    output_price_per_million = model.get("output_price", 0)
+
+    # Calculate costs
+    input_cost = (prompt_tokens / 1_000_000) * input_price_per_million
+    output_cost = (completion_tokens / 1_000_000) * output_price_per_million
+    total_cost = input_cost + output_cost
+
+    return total_cost
 
 def get_chat_response():
     try:
@@ -274,15 +305,29 @@ def get_chat_response():
         elapsed_time = time.time() - start_time
         tokens = len(content.split())
         
+        # Calculate cost
+        total_cost = get_costs_from_response(result, ss.active_model_name)
+        
+        # Calculate messages per dollar
+        messages_per_dollar = 100 / total_cost if total_cost > 0 else 0
+        
         return {
             "text": content,
             "time": elapsed_time,
             "tokens": tokens,
-            "rate": tokens / elapsed_time if elapsed_time > 0 else 0
+            "rate": tokens / elapsed_time if elapsed_time > 0 else 0,
+            "cost": total_cost,
+            "messages_per_dollar": messages_per_dollar
         }
     except Exception as e:
         st.error(f"Error: {str(e)}")
         return None
+
+# def handle_grok_response(grok_response):
+#     # Process the response...
+    
+#     # Display success notice with cost information
+#     st.success(f"Response received! Total cost: ${grok_response['cost']:.4f} | Messages per Dollar: {grok_response['messages_per_dollar']:.2f}")
 
 def render_chat_tab():
     message_container = st.container(height=600, border=True)
@@ -305,7 +350,9 @@ def render_chat_tab():
                 st.info(
                     f"Time: {response_data['time']:.2f}s | "
                     f"Tokens: {response_data['tokens']} | "
-                    f"Speed: {response_data['rate']:.1f} T/s"
+                    f"Speed: {response_data['rate']:.1f} T/s | "
+                    f"Cost: ${response_data['cost']:.4f} | "
+                    f"Messages/Dollar: {format(response_data['messages_per_dollar'], ',.0f')}"
                 )
 
 def render_new_chat_tab():
@@ -341,6 +388,29 @@ def render_new_chat_tab():
                     st.success(f"Chat '{new_chat_name}' created successfully!")
                     st.rerun()
 
+def render_archive_tab():
+    st.markdown("### Archive Management 📂")
+    st.markdown("Toggle archive status for your chats. Archived chats won't appear in the sidebar.")
+    st.divider()
+    
+    # Retrieve all chats except Scratch Pad
+    all_chats = list(ss.db.chats.find({"name": {"$ne": "Scratch Pad"}}, {"name": 1, "archived": 1}))
+    
+    # Display each chat with its archive status
+    for chat in all_chats:
+        col1, col2, col3 = st.columns([3, 3, 2])
+        archived_status = chat.get('archived', False)
+        with col1:
+            st.markdown(f"**Chat Name:** :blue[{chat['name']}]")
+        with col2:
+            st.markdown(f"**Archived:** :blue[{archived_status}]")
+        with col3:
+            # Use a checkbox to toggle the archived status
+            toggle = st.checkbox("Archived", value=archived_status, key=f"toggle_{chat['name']}", help="Check to archive this chat")
+            if toggle != archived_status:
+                ss.db.chats.update_one({"_id": chat["_id"]}, {"$set": {"archived": toggle}})
+                st.rerun()  # Refresh to update the list
+
 def render_models_tab():
     st.warning("⚠️ Model Management is currently under construction. This feature will be available soon!")
 
@@ -348,11 +418,13 @@ def render_prompts_tab():
     st.warning("⚠️ Prompt Management is currently under construction. This feature will be available soon!")
 
 def manage_menu():
-    chat_tab, new_chat_tab, models_tab, prompts_tab = st.tabs(["💬 Chat", "🆕 New Chat", "🤖 Models", "📝 Prompts"])
+    chat_tab, new_chat_tab, archive_tab, models_tab, prompts_tab = st.tabs(["💬 Chat", "🆕 New Chat", "🗂️ Archive", "🤖 Models", "📝 Prompts"])
     with chat_tab:
         render_chat_tab()
     with new_chat_tab:
         render_new_chat_tab()
+    with archive_tab:
+        render_archive_tab()
     with models_tab:
         render_models_tab()
     with prompts_tab:
