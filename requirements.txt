@@ -1,8 +1,23 @@
-openai
-dotenv
-streamlit
-pymongo
-python-dotenv
-google-generativeai
-httpx
-requests
+# Core dependencies
+streamlit>=1.28.0
+pymongo>=4.5.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+
+# AI model APIs
+openai>=1.3.0
+google-generativeai>=0.3.1
+
+# HTTP utilities
+httpx>=0.25.0
+
+# Image processing
+Pillow>=10.0.0  # PIL is now Pillow
+
+# CLI and utilities
+argparse>=1.4.0  # For command-line arguments
+
+# Development dependencies
+pytest>=7.4.0    # For testing
+black>=23.10.0   # For code formatting
+flake8>=6.1.0    # For linting
