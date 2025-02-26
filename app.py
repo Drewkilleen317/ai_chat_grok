@@ -226,6 +226,11 @@ def manage_sidebar():
                 st.rerun()
     
     other_chats = [c for c in chats if c["name"] not in ["Scratch Pad", ss.active_chat["name"]]]
+    
+    # Add a divider if there are other chats
+    if other_chats:
+        st.sidebar.divider()
+    
     for chat in other_chats:
         friendly_time = get_friendly_time(chat.get('created_at'))
         col1, col2 = st.sidebar.columns([7, 1])
@@ -268,16 +273,12 @@ def get_chat_response():
         # Extract system prompt
         system_prompt = active_chat.get("system_prompt")
         
-        # Build message history
-        history = []
-        if system_prompt:
-            history.append({"role": "system", "content": system_prompt})
+        # Use existing messages from the database
+        history = active_chat["messages"].copy()
         
-        # Add messages from the database
-        history.extend([
-            {"role": msg["role"], "content": msg["content"]}
-            for msg in active_chat["messages"]
-        ])
+        # Inject system prompt at the beginning if it exists
+        if system_prompt:
+            history.insert(0, {"role": "system", "content": system_prompt})
 
         start_time = time.time()
         
