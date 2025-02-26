@@ -1,6 +1,5 @@
 import os
 import time
-import warnings
 import requests
 from dotenv import load_dotenv
 from pymongo import MongoClient
@@ -38,12 +37,7 @@ def get_database():
     return client[db_name]
 
 def get_available_grok_models():
-    """
-    Retrieve all available models from the database.
-    
-    Returns:
-        list: List of model names available for chat
-    """
+
     try:
         db_models = list(model["name"] for model in ss.db.models.find())
         return db_models if db_models else []
@@ -52,12 +46,7 @@ def get_available_grok_models():
         return []
 
 def save_model(model_data):
-    """
-    Save or update a model in the database.
-    
-    Args:
-        model_data (dict): Model information to save, including name and configuration
-    """
+
     existing = ss.db.models.find_one({"name": model_data["name"]})
     if existing:
         ss.db.models.update_one(
@@ -67,19 +56,7 @@ def save_model(model_data):
     else:
         ss.db.models.insert_one(model_data)
 
-def create_chat(name, model=None, system_prompt=None):
-    """
-    Create a new chat with the given parameters. If a chat with the given name already exists,
-    return the existing chat.
-    
-    Args:
-        name (str): Name of the chat
-        model (str, optional): Model to use for the chat. If None, uses first available model
-        system_prompt (str, optional): System prompt for the chat. If None, uses default
-        
-    Returns:
-        dict: The chat document (either newly created or existing)
-    """
+def create_chat(name):
     # Check if chat already exists
     existing_chat = ss.db.chats.find_one({"name": name})
     if existing_chat:
@@ -112,31 +89,17 @@ def create_chat(name, model=None, system_prompt=None):
     return new_chat
 
 def initialize():
-    """
-    Initialize the application by setting up the database connection and default values.
-    """
-    if "initialized" not in ss:
-        ss.initialized = True
-        ss.db = get_database()
-        ss.default_system_prompt = ss.db.prompts.find_one({"name": "Default System Prompt"})
-        ss.default_system_prompt = ss.default_system_prompt["content"]
-        ss.show_metrics = True
-        ss.llm_avatar = "🤖"
-        ss.user_avatar = "😎"
-        
-        # Get or create Scratch Pad chat
-        scratch_pad = create_chat("Scratch Pad")
-        if scratch_pad:
-            ss.active_chat = scratch_pad
-            ss.active_model_name = scratch_pad["model"]
+    ss.initialized = True
+    ss.db = get_database()
+    ss.default_system_prompt = ss.db.prompts.find_one({"name": "Default System Prompt"})
+    ss.default_system_prompt = ss.default_system_prompt["content"]
+    ss.show_metrics = True
+    ss.llm_avatar = "🤖"
+    ss.user_avatar = "😎"
+    ss.active_chat = ss.db.chats.find_one({"name": "Scratch Pad"})
+    ss.active_model_name = ss.active_chat["model"]
 
 def save_user_message(prompt):
-    """
-    Save the user's message to the current active chat in the database.
-    
-    Args:
-        prompt (str): The user's input message
-    """
     try:
         user_message = {
             "role": "user",
@@ -156,48 +119,29 @@ def save_user_message(prompt):
         st.error(f"Error saving user message: {str(e)}")
 
 def paint_messages(container, messages):
-    """
-    Paint the messages in the chat container.
-    
-    Args:
-        container: Streamlit container to render messages in
-        messages (list): List of messages to render
-    """
     for msg in messages:
         avatar = ss.llm_avatar if msg["role"] == "assistant" else ss.user_avatar
         with container.chat_message(msg["role"], avatar=avatar):
             st.markdown(msg["content"])
 
 def get_friendly_time(timestamp):
-    """
-    Convert a timestamp to a friendly time string.
-    
-    Args:
-        timestamp (float): Timestamp to convert
-    
-    Returns:
-        str: Friendly time string
-    """
-    if not timestamp:
-        return "Unknown"
     now = time.time()
     diff = now - timestamp
-    if diff < 60:
-        return "Just now"
-    elif diff < 3600:
-        minutes = int(diff / 60)
-        return f"{minutes}m ago"
-    elif diff < 86400:
-        hours = int(diff / 3600)
-        return f"{hours}h ago"
-    else:
-        days = int(diff / 86400)
-        return f"{days}d ago"
+    time_actions = {
+        lambda d: d < 60: lambda d: "Just now",
+        lambda d: d < 3600: lambda d: f"{int(d / 60)}m ago",
+        lambda d: d < 86400: lambda d: f"{int(d / 3600)}h ago",
+        lambda d: d < 172800: lambda d: "Yesterday",
+        lambda d: d < 604800: lambda d: f"{int(d / 86400)}d ago",
+        lambda d: d < 2592000: lambda d: f"{int(d / 604800)}w ago",
+        lambda d: True: lambda d: time.strftime('%Y-%m-%d', time.localtime(timestamp))
+    }
+    
+    for condition, action in time_actions.items():
+        if condition(diff):
+            return action(diff)
 
 def manage_sidebar():
-    """
-    Manage the sidebar, including displaying active chat information and chat selection.
-    """
     st.sidebar.markdown("### :blue[Active Chat] 🎯")
     st.sidebar.markdown(f"**Chat Name:** :blue[{ss.active_chat['name']}]")
     st.sidebar.markdown(f"**Model:** :blue[{ss.active_model_name}]")
@@ -217,7 +161,7 @@ def manage_sidebar():
         # Ensure Scratch Pad is not archived
         scratch_pad["archived"] = False
     
-    chat_names = [chat["name"] for chat in active_chats]
+    # chat_names = [chat["name"] for chat in active_chats]
     chats = active_chats
     
     col1, col2 = st.sidebar.columns([7, 1])
@@ -267,16 +211,6 @@ def manage_sidebar():
                 st.rerun()
 
 def get_costs_from_response(grok_response, model_name):
-    """
-    Calculate the costs of a Grok response.
-    
-    Args:
-        grok_response (dict): Grok response to calculate costs for
-        model_name (str): Name of the model used for the response
-    
-    Returns:
-        float: Total cost of the response
-    """
     # Extract usage data from the Grok response
     usage = grok_response.get("usage", {})
     prompt_tokens = usage.get("prompt_tokens", 0)
@@ -295,12 +229,6 @@ def get_costs_from_response(grok_response, model_name):
     return total_cost
 
 def get_chat_response():
-    """
-    Get a chat response from the Grok API.
-    
-    Returns:
-        dict: Chat response data, including text, time, tokens, rate, cost, and messages per dollar
-    """
     try:
         # Fetch the latest chat document from the database
         active_chat = ss.db.chats.find_one({"_id": ss.active_chat["_id"]})
@@ -380,9 +308,6 @@ def get_chat_response():
         return None
 
 def render_chat_tab():
-    """
-    Render the chat tab, including the chat input and message display.
-    """
     message_container = st.container(height=600, border=True)
     paint_messages(message_container, ss.active_chat["messages"])
     
@@ -409,9 +334,6 @@ def render_chat_tab():
                 )
 
 def render_new_chat_tab():
-    """
-    Render the new chat tab, including the chat creation form.
-    """
     st.markdown("### Create New Chat 🆕")
     with st.form("new_chat_form", clear_on_submit=True):
         new_chat_name = st.text_input(
@@ -445,9 +367,6 @@ def render_new_chat_tab():
                     st.rerun()
 
 def render_archive_tab():
-    """
-    Render the archive tab, including the chat archive management interface.
-    """
     st.markdown("### Archive Management 📂")
     st.markdown("Toggle archive status for your chats. Archived chats won't appear in the sidebar.")
     st.divider()
@@ -471,21 +390,12 @@ def render_archive_tab():
                 st.rerun()  # Refresh to update the list
 
 def render_models_tab():
-    """
-    Render the models tab, including a warning message.
-    """
     st.warning("⚠️ Model Management is currently under construction. This feature will be available soon!")
 
 def render_prompts_tab():
-    """
-    Render the prompts tab, including a warning message.
-    """
     st.warning("⚠️ Prompt Management is currently under construction. This feature will be available soon!")
 
 def manage_menu():
-    """
-    Manage the menu, including rendering the chat, new chat, archive, models, and prompts tabs.
-    """
     chat_tab, new_chat_tab, archive_tab, models_tab, prompts_tab = st.tabs(["💬 Chat", "🆕 New Chat", "🗂️ Archive", "🤖 Models", "📝 Prompts"])
     with chat_tab:
         render_chat_tab()
@@ -499,9 +409,6 @@ def manage_menu():
         render_prompts_tab()
 
 def main():
-    """
-    Main application entry point.
-    """
     if 'initialized' not in st.session_state:
         initialize()
     manage_sidebar()
