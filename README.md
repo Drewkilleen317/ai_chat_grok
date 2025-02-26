@@ -51,6 +51,67 @@ A streamlined chat interface for interacting with language models through X.AI's
     MONGODB_DB_NAME=chat_grok
     ```
 
+## Getting an X.AI API Key
+
+To use the Grok models via X.AI's API, you'll need to obtain an API key:
+
+1. Visit the [X.AI developer platform](https://x.ai) and sign up for an account
+2. Navigate to the API section in your account dashboard
+3. Create a new API key with appropriate permissions
+4. Copy the generated API key
+5. Add the key to your `.env` file as `XAI_API_KEY=your_key_here`
+
+Note: X.AI may have specific usage tiers and pricing. Check their current documentation for details.
+
+## Setting Up MongoDB
+
+### Option 1: Local MongoDB Installation
+
+1. **Install MongoDB Community Edition**:
+   - **macOS** (using Homebrew):
+     ```bash
+     brew tap mongodb/brew
+     brew install mongodb-community
+     ```
+   - **Windows**: Download and install from the [MongoDB website](https://www.mongodb.com/try/download/community)
+   - **Linux**: Follow distribution-specific instructions from the [MongoDB documentation](https://www.mongodb.com/docs/manual/administration/install-on-linux/)
+
+2. **Start MongoDB service**:
+   - **macOS**:
+     ```bash
+     brew services start mongodb-community
+     ```
+   - **Windows**: MongoDB should run as a service automatically
+   - **Linux**:
+     ```bash
+     sudo systemctl start mongod
+     ```
+
+3. **Verify installation**:
+   ```bash
+   mongo --version
+   mongosh
+   ```
+
+4. **Update your `.env` file**:
+   ```
+   MONGODB_URL=mongodb://localhost:27017
+   MONGODB_DB_NAME=chat_grok
+   ```
+
+### Option 2: MongoDB Atlas (Cloud)
+
+1. Create a free account at [MongoDB Atlas](https://www.mongodb.com/cloud/atlas)
+2. Set up a new cluster (the free tier is sufficient for most users)
+3. Create a database user with read/write permissions
+4. Configure network access (IP whitelist)
+5. Get your connection string from the Atlas dashboard
+6. Update your `.env` file with the connection string:
+   ```
+   MONGODB_URL=mongodb+srv://<username>:<password>@cluster0.mongodb.net/
+   MONGODB_DB_NAME=chat_grok
+   ```
+
 ## Running the Application
 
 ```bash
@@ -64,10 +125,6 @@ streamlit run app.py
 - Utilizes Streamlit for frontend
 - MongoDB for persistent storage
 - Centralized session state management
-
-## Getting an X.AI API Key
-
-To use the Grok models via X.AI's API, you'll need to obtain an API key.
 
 ## Contributing
 
