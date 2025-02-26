@@ -56,28 +56,15 @@ def save_model(model_data):
     else:
         ss.db.models.insert_one(model_data)
 
-def create_chat(name):
-    # Check if chat already exists
-    existing_chat = ss.db.chats.find_one({"name": name})
-    if existing_chat:
-        return existing_chat
-        
-    # Get model if not provided
-    if model is None:
-        available_models = get_available_grok_models()
-        if not available_models:
-            st.error("No models available. Please add at least one model.")
-            return None
-        model = available_models[0]
+def create_chat(new_chat_name, model, system_prompt=None):
+    current_time = time.time()
     
-    # Get system prompt if not provided
+    # Use default system prompt if not provided
     if system_prompt is None:
         system_prompt = ss.default_system_prompt
-        
-    # Create new chat
-    current_time = time.time()
+    
     new_chat = {
-        "name": name,
+        "name": new_chat_name,
         "model": model,
         "system_prompt": system_prompt,
         "messages": [],
@@ -99,6 +86,51 @@ def initialize():
     ss.active_chat = ss.db.chats.find_one({"name": "Scratch Pad"})
     ss.active_model_name = ss.active_chat["model"]
 
+def add_message_to_chat(chat_name, role, content):
+    """
+    Add a message to a specific chat in the database.
+    
+    Args:
+        chat_name (str): Name of the chat
+        role (str): Role of the message sender ('user' or 'assistant')
+        content (str): Message content
+    """
+    message = {
+        "role": role,
+        "content": content,
+        "timestamp": time.time()
+    }
+    
+    ss.db.chats.update_one(
+        {"name": chat_name},
+        {"$push": {"messages": message}}
+    )
+
+def get_chat_messages(chat_name):
+    """
+    Retrieve all messages for a specific chat.
+    
+    Args:
+        chat_name (str): Name of the chat
+    
+    Returns:
+        list: List of messages in the chat
+    """
+    chat = ss.db.chats.find_one({"name": chat_name})
+    return chat.get("messages", []) if chat else []
+
+def clear_chat_messages(chat_name):
+    """
+    Clear all messages for a specific chat.
+    
+    Args:
+        chat_name (str): Name of the chat
+    """
+    ss.db.chats.update_one(
+        {"name": chat_name},
+        {"$set": {"messages": []}}
+    )
+
 def save_user_message(prompt):
     try:
         user_message = {
@@ -108,10 +140,7 @@ def save_user_message(prompt):
         }
         
         # Update the chat document in the database by adding the new message
-        ss.db.chats.update_one(
-            {"_id": ss.active_chat["_id"]},
-            {"$push": {"messages": user_message}}
-        )
+        add_message_to_chat(ss.active_chat['name'], 'user', user_message['content'])
         
         # Refresh the active chat in session state
         ss.active_chat = ss.db.chats.find_one({"_id": ss.active_chat["_id"]})
@@ -172,11 +201,7 @@ def manage_sidebar():
             st.rerun()
     with col2:
         if st.button("🧹", key="clear_default", help="Clear Scratch Pad history"):
-            ss.active_chat["messages"] = []
-            ss.db.chats.update_one(
-                {"name": "Scratch Pad"},
-                {"$set": {"messages": ss.active_chat["messages"]}}
-            )
+            clear_chat_messages("Scratch Pad")
             st.rerun()
     
     if ss.active_chat["name"] != "Scratch Pad":
@@ -186,11 +211,7 @@ def manage_sidebar():
             st.button(f"👉 {ss.active_chat['name']} • {friendly_time}", key="current_chat", use_container_width=True)
         with col2:
             if st.button("🧹", key="clear_current", help=f"Clear {ss.active_chat['name']} history"):
-                ss.active_chat["messages"] = []
-                ss.db.chats.update_one(
-                    {"_id": ss.active_chat["_id"]},
-                    {"$set": {"messages": []}}
-                )
+                clear_chat_messages(ss.active_chat['name'])
                 st.rerun()
     
     other_chats = [c for c in chats if c["name"] not in ["Scratch Pad", ss.active_chat["name"]]]
@@ -271,16 +292,7 @@ def get_chat_response():
         content = result["choices"][0]["message"]["content"]
         
         # Save AI's response to the database
-        ai_message = {
-            "role": "assistant",
-            "content": content,
-            "timestamp": time.time()
-        }
-        
-        ss.db.chats.update_one(
-            {"_id": ss.active_chat["_id"]},
-            {"$push": {"messages": ai_message}}
-        )
+        add_message_to_chat(ss.active_chat['name'], 'assistant', content)
         
         # Refresh the active chat in session state
         ss.active_chat = ss.db.chats.find_one({"_id": ss.active_chat["_id"]})
@@ -309,7 +321,7 @@ def get_chat_response():
 
 def render_chat_tab():
     message_container = st.container(height=600, border=True)
-    paint_messages(message_container, ss.active_chat["messages"])
+    paint_messages(message_container, get_chat_messages(ss.active_chat['name']))
     
     # Chat input
     prompt = st.chat_input("Type your message...")
