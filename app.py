@@ -86,6 +86,17 @@ def initialize():
     ss.active_chat = ss.db.chats.find_one({"name": "Scratch Pad"})
     ss.active_model_name = ss.active_chat["model"]
 
+    # Initialize LLM client configuration in session state
+    if 'llm_client' not in ss:
+        ss.llm_client = {
+            'base_url': "https://api.x.ai/v1/chat/completions",
+            'api_key': os.environ.get("XAI_API_KEY"),
+            'headers': {
+                "Content-Type": "application/json"
+            },
+            'default_model': ss.active_model_name
+        }
+
 def add_message_to_chat(chat_name, role, content):
     """
     Add a message to a specific chat in the database.
@@ -270,13 +281,12 @@ def get_chat_response():
 
         start_time = time.time()
         
-        # Make API request
-        XAI_API_KEY = os.environ.get("XAI_API_KEY")
+        # Make API request using stored client configuration
         response = requests.post(
-            "https://api.x.ai/v1/chat/completions",
+            ss.llm_client['base_url'],
             headers={
-                "Authorization": f"Bearer {XAI_API_KEY}",
-                "Content-Type": "application/json"
+                **ss.llm_client['headers'],
+                "Authorization": f"Bearer {ss.llm_client['api_key']}"
             },
             json={
                 "model": ss.active_model_name,
