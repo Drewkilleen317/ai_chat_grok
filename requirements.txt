@@ -21,3 +21,5 @@ argparse>=1.4.0  # For command-line arguments
 pytest>=7.4.0    # For testing
 black>=23.10.0   # For code formatting
 flake8>=6.1.0    # For linting
+
+streamlit-extras

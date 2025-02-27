@@ -4,6 +4,7 @@ import requests
 from dotenv import load_dotenv
 from pymongo import MongoClient
 import streamlit as st
+from openai import OpenAI
 
 st.set_page_config(
     page_icon="💬", 
@@ -118,15 +119,6 @@ def add_message_to_chat(chat_name, role, content):
     )
 
 def get_chat_messages(chat_name):
-    """
-    Retrieve all messages for a specific chat.
-    
-    Args:
-        chat_name (str): Name of the chat
-    
-    Returns:
-        list: List of messages in the chat
-    """
     chat = ss.db.chats.find_one({"name": chat_name})
     return chat.get("messages", []) if chat else []
 
@@ -158,7 +150,8 @@ def save_user_message(prompt):
     except Exception as e:
         st.error(f"Error saving user message: {str(e)}")
 
-def paint_messages(container, messages):
+def paint_messages(container):
+    messages = get_chat_messages(ss.active_chat['name'])
     for msg in messages:
         avatar = ss.llm_avatar if msg["role"] == "assistant" else ss.user_avatar
         with container.chat_message(msg["role"], avatar=avatar):
@@ -266,73 +259,71 @@ def get_costs_from_response(grok_response, model_name):
     return total_cost
 
 def get_chat_response():
-    try:
-        # Fetch the latest chat document from the database
-        active_chat = ss.db.chats.find_one({"_id": ss.active_chat["_id"]})
-        
-        # Extract system prompt
-        system_prompt = active_chat.get("system_prompt")
-        
-        # Use existing messages from the database
-        history = active_chat["messages"].copy()
-        
-        # Inject system prompt at the beginning if it exists
-        if system_prompt:
-            history.insert(0, {"role": "system", "content": system_prompt})
+    
+    # Fetch the latest chat document from the database
+    active_chat = ss.db.chats.find_one({"_id": ss.active_chat["_id"]})
+    
+    # Extract system prompt
+    system_prompt = active_chat.get("system_prompt")
+    
+    # Use existing messages from the database
+    history = active_chat["messages"].copy()
+    
+    # Inject system prompt at the beginning if it exists
+    if system_prompt:
+        history.insert(0, {"role": "system", "content": system_prompt})
 
-        start_time = time.time()
-        
-        # Make API request using stored client configuration
-        response = requests.post(
-            ss.llm_client['base_url'],
-            headers={
-                **ss.llm_client['headers'],
-                "Authorization": f"Bearer {ss.llm_client['api_key']}"
-            },
-            json={
-                "model": ss.active_model_name,
-                "messages": history
-            }
-        )
-        
-        if response.status_code != 200:
-            st.error(f"API Error {response.status_code}: {response.text}")
-            return None
-            
-        result = response.json()
-        content = result["choices"][0]["message"]["content"]
-        
-        # Save AI's response to the database
-        add_message_to_chat(ss.active_chat['name'], 'assistant', content)
-        
-        # Refresh the active chat in session state
-        ss.active_chat = ss.db.chats.find_one({"_id": ss.active_chat["_id"]})
-        
-        # Calculate metrics
-        elapsed_time = time.time() - start_time
-        tokens = len(content.split())
-        
-        # Calculate cost
-        total_cost = get_costs_from_response(result, ss.active_model_name)
-        
-        # Calculate messages per dollar
-        messages_per_dollar = 100 / total_cost if total_cost > 0 else 0
-        
-        return {
-            "text": content,
-            "time": elapsed_time,
-            "tokens": tokens,
-            "rate": tokens / elapsed_time if elapsed_time > 0 else 0,
-            "cost": total_cost,
-            "messages_per_dollar": messages_per_dollar
+    start_time = time.time()
+ 
+    # Make API request using stored client configuration
+    response = requests.post(
+        ss.llm_client['base_url'],
+        headers={
+            **ss.llm_client['headers'],
+            "Authorization": f"Bearer {ss.llm_client['api_key']}"
+        },
+        json={
+            "model": ss.active_model_name,
+            "messages": history
         }
-    except Exception as e:
-        st.error(f"Error: {str(e)}")
+    )
+    
+    if response.status_code != 200:
+        st.error(f"API Error {response.status_code}: {response.text}")
         return None
+        
+    result = response.json()
+    content = result["choices"][0]["message"]["content"]
+#===============================================================================
+    # Save AI's response to the database
+    add_message_to_chat(ss.active_chat['name'], 'assistant', content)
+    
+    # Refresh the active chat in session state
+    ss.active_chat = ss.db.chats.find_one({"_id": ss.active_chat["_id"]})
+    
+    # Calculate metrics
+    elapsed_time = time.time() - start_time
+    tokens = len(content.split())
+    
+    # Calculate cost
+    total_cost = get_costs_from_response(result, ss.active_model_name)
+    
+    # Calculate messages per dollar
+    messages_per_dollar = 100 / total_cost if total_cost > 0 else 0
+    
+    return {
+        "text": content,
+        "time": elapsed_time,
+        "tokens": tokens,
+        "rate": tokens / elapsed_time if elapsed_time > 0 else 0,
+        "cost": total_cost,
+        "messages_per_dollar": messages_per_dollar
+    }
+
 
 def render_chat_tab():
     message_container = st.container(height=600, border=True)
-    paint_messages(message_container, get_chat_messages(ss.active_chat['name']))
+    paint_messages(message_container)
     
     # Chat input
     prompt = st.chat_input("Type your message...")
@@ -419,7 +410,13 @@ def render_prompts_tab():
     st.warning("⚠️ Prompt Management is currently under construction. This feature will be available soon!")
 
 def manage_menu():
-    chat_tab, new_chat_tab, archive_tab, models_tab, prompts_tab = st.tabs(["💬 Chat", "🆕 New Chat", "🗂️ Archive", "🤖 Models", "📝 Prompts"])
+    chat_tab, new_chat_tab, archive_tab, models_tab, prompts_tab = st.tabs([
+        "💬 Chat", 
+        "🆕 New Chat", 
+        "🗂️ Archive", 
+        "🤖 Models", 
+        "📝 Prompts"
+    ])
     with chat_tab:
         render_chat_tab()
     with new_chat_tab:
