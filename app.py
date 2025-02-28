@@ -15,7 +15,6 @@ st.set_page_config(
 )
 load_dotenv(override=True)
 
-framework_name = "Grok"
 ss = st.session_state
 
 # ---- Database and Initialization Functions ----
@@ -36,26 +35,6 @@ def get_database():
         retryWrites=True          # Enable automatic retrying of failed writes
     )   
     return client[db_name]
-
-def get_available_grok_models():
-
-    try:
-        db_models = list(model["name"] for model in ss.db.models.find())
-        return db_models if db_models else []
-    except Exception as e:
-        st.error(f"Error fetching models: {str(e)}")
-        return []
-
-def save_model(model_data):
-
-    existing = ss.db.models.find_one({"name": model_data["name"]})
-    if existing:
-        ss.db.models.update_one(
-            {"name": model_data["name"]},
-            {"$set": model_data}
-        )
-    else:
-        ss.db.models.insert_one(model_data)
 
 def create_chat(new_chat_name, model, system_prompt=None):
     current_time = time.time()
@@ -86,76 +65,14 @@ def initialize():
     ss.user_avatar = "😎"
     ss.active_chat = ss.db.chats.find_one({"name": "Scratch Pad"})
     ss.active_model_name = ss.active_chat["model"]
-
-    # Initialize LLM client configuration in session state
-    if 'llm_client' not in ss:
-        ss.llm_client = {
-            'base_url': "https://api.x.ai/v1/chat/completions",
-            'api_key': os.environ.get("XAI_API_KEY"),
-            'headers': {
-                "Content-Type": "application/json"
-            },
-            'default_model': ss.active_model_name
-        }
-
-def add_message_to_chat(chat_name, role, content):
-    """
-    Add a message to a specific chat in the database.
-    
-    Args:
-        chat_name (str): Name of the chat
-        role (str): Role of the message sender ('user' or 'assistant')
-        content (str): Message content
-    """
-    message = {
-        "role": role,
-        "content": content,
-        "timestamp": time.time()
+    ss.llm_client = {
+        'base_url': "https://api.x.ai/v1/chat/completions",
+        'api_key': os.environ.get("XAI_API_KEY"),
+        'headers': {
+            "Content-Type": "application/json"
+        },
+        'default_model': ss.active_model_name
     }
-    
-    ss.db.chats.update_one(
-        {"name": chat_name},
-        {"$push": {"messages": message}}
-    )
-
-def get_chat_messages(chat_name):
-    chat = ss.db.chats.find_one({"name": chat_name})
-    return chat.get("messages", []) if chat else []
-
-def clear_chat_messages(chat_name):
-    """
-    Clear all messages for a specific chat.
-    
-    Args:
-        chat_name (str): Name of the chat
-    """
-    ss.db.chats.update_one(
-        {"name": chat_name},
-        {"$set": {"messages": []}}
-    )
-
-def save_user_message(prompt):
-    try:
-        user_message = {
-            "role": "user",
-            "content": prompt,
-            "timestamp": time.time()
-        }
-        
-        # Update the chat document in the database by adding the new message
-        add_message_to_chat(ss.active_chat['name'], 'user', user_message['content'])
-        
-        # Refresh the active chat in session state
-        ss.active_chat = ss.db.chats.find_one({"_id": ss.active_chat["_id"]})
-    except Exception as e:
-        st.error(f"Error saving user message: {str(e)}")
-
-def paint_messages(container):
-    messages = get_chat_messages(ss.active_chat['name'])
-    for msg in messages:
-        avatar = ss.llm_avatar if msg["role"] == "assistant" else ss.user_avatar
-        with container.chat_message(msg["role"], avatar=avatar):
-            st.markdown(msg["content"])
 
 def get_friendly_time(timestamp):
     now = time.time()
@@ -205,7 +122,7 @@ def manage_sidebar():
             st.rerun()
     with col2:
         if st.button("🧹", key="clear_default", help="Clear Scratch Pad history"):
-            clear_chat_messages("Scratch Pad")
+            ss.db.chats.update_one({"name": "Scratch Pad"},{"$set": {"messages": []}})
             st.rerun()
     
     if ss.active_chat["name"] != "Scratch Pad":
@@ -215,7 +132,7 @@ def manage_sidebar():
             st.button(f"👉 {ss.active_chat['name']} • {friendly_time}", key="current_chat", use_container_width=True)
         with col2:
             if st.button("🧹", key="clear_current", help=f"Clear {ss.active_chat['name']} history"):
-                clear_chat_messages(ss.active_chat['name'])
+                ss.db.chats.update_one({"name": ss.active_chat['name']},{"$set": {"messages": []}})
                 st.rerun()
     
     other_chats = [c for c in chats if c["name"] not in ["Scratch Pad", ss.active_chat["name"]]]
@@ -240,6 +157,13 @@ def manage_sidebar():
                     ss.active_model_name = ss.active_chat["model"]
                 st.rerun()
 
+def paint_messages(container):
+    messages = ss.db.chats.find_one({"name": ss.active_chat['name']}).get("messages", []) 
+    for msg in messages:
+        avatar = ss.llm_avatar if msg["role"] == "assistant" else ss.user_avatar
+        with container.chat_message(msg["role"], avatar=avatar):
+            st.markdown(msg["content"])
+
 def get_costs_from_response(grok_response, model_name):
     # Extract usage data from the Grok response
     usage = grok_response.get("usage", {})
@@ -259,23 +183,12 @@ def get_costs_from_response(grok_response, model_name):
     return total_cost
 
 def get_chat_response():
-    
-    # Fetch the latest chat document from the database
-    active_chat = ss.db.chats.find_one({"_id": ss.active_chat["_id"]})
-    
-    # Extract system prompt
-    system_prompt = active_chat.get("system_prompt")
-    
-    # Use existing messages from the database
-    history = active_chat["messages"].copy()
-    
-    # Inject system prompt at the beginning if it exists
-    if system_prompt:
-        history.insert(0, {"role": "system", "content": system_prompt})
+    system_prompt = ss.active_chat.get("system_prompt")
+    model_name = ss.active_chat["model"]
+    history = ss.active_chat["messages"].copy()
+    history.insert(0, {"role": "system", "content": system_prompt})
 
     start_time = time.time()
- 
-    # Make API request using stored client configuration
     response = requests.post(
         ss.llm_client['base_url'],
         headers={
@@ -283,7 +196,7 @@ def get_chat_response():
             "Authorization": f"Bearer {ss.llm_client['api_key']}"
         },
         json={
-            "model": ss.active_model_name,
+            "model": model_name,
             "messages": history
         }
     )
@@ -294,9 +207,13 @@ def get_chat_response():
         
     result = response.json()
     content = result["choices"][0]["message"]["content"]
-#===============================================================================
-    # Save AI's response to the database
-    add_message_to_chat(ss.active_chat['name'], 'assistant', content)
+
+    message = {
+        "role": "assistant",
+        "content": content,
+        "timestamp": time.time()
+    }
+    ss.db.chats.update_one({"name": ss.active_chat['name']}, {"$push": {"messages": message}})
     
     # Refresh the active chat in session state
     ss.active_chat = ss.db.chats.find_one({"_id": ss.active_chat["_id"]})
@@ -320,15 +237,26 @@ def get_chat_response():
         "messages_per_dollar": messages_per_dollar
     }
 
-
 def render_chat_tab():
-    message_container = st.container(height=600, border=True)
+    message_container = st.container(height=900, border=True)
     paint_messages(message_container)
     
     # Chat input
     prompt = st.chat_input("Type your message...")
     if prompt:
-        save_user_message(prompt)
+        try:
+            user_message = {"role": "user", "content": prompt,
+                "timestamp": time.time()
+            }
+            message = {
+                "role": "user",
+                "content": prompt,
+                "timestamp": time.time()
+            }
+            ss.db.chats.update_one({"name": ss.active_chat['name']}, {"$push": {"messages": message}})
+            ss.active_chat = ss.db.chats.find_one({"name": ss.active_chat['name']})
+        except Exception as e:
+            st.error(f"Error saving user message: {str(e)}")
         
         # Immediately display user message in chat container
         with message_container.chat_message("user", avatar=ss.user_avatar):
@@ -355,7 +283,12 @@ def render_new_chat_tab():
             placeholder="Enter chat name...",
             help="Enter a unique name for your new chat"
         ).strip()
-        available_models = get_available_grok_models()
+        try:
+            db_models = list(model["name"] for model in ss.db.models.find())
+            available_models = db_models if db_models else []
+        except Exception as e:
+            st.error(f"Error fetching models: {str(e)}")
+            available_models = []
         model = st.selectbox(
             "Select Model",
             options=available_models,
