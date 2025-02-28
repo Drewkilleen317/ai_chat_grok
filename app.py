@@ -67,10 +67,13 @@ def manage_sidebar():
     st.sidebar.markdown(f"**Chat Name:** :blue[{ss.active_chat['name']}]")
     st.sidebar.markdown(f"**Model:** :blue[{ss.active_chat['model']}]")
     st.sidebar.divider()
-    
     st.sidebar.markdown("### :blue[Select Chat] 📚")
-    chats = list(ss.db.chats.find({"archived": {"$ne": True}}, {"name": 1, "created_at": 1}))
+
+   
+
     col1, col2 = st.sidebar.columns([7, 1])
+
+    # Create and sense if clicked the default chat (Scratch Pad) And the clear button for Scratch Pad
     with col1:
         if st.button("💬 Scratch Pad", key="default_chat", use_container_width=True):
             ss.active_chat = ss.db.chats.find_one({"name": "Scratch Pad"})
@@ -79,7 +82,8 @@ def manage_sidebar():
         if st.button("🧹", key="clear_default", help="Clear Scratch Pad history"):
             ss.db.chats.update_one({"name": "Scratch Pad"},{"$set": {"messages": []}})
             st.rerun()
-    
+
+    # Create and sense if clicked the current chat if not the default chat (Scratch Pad) And the clear button
     if ss.active_chat["name"] != "Scratch Pad":
         friendly_time = get_friendly_time(ss.active_chat.get('created_at'))
         col1, col2 = st.sidebar.columns([7, 1])
@@ -89,7 +93,9 @@ def manage_sidebar():
             if st.button("🧹", key="clear_current", help=f"Clear {ss.active_chat['name']} history"):
                 ss.db.chats.update_one({"name": ss.active_chat['name']},{"$set": {"messages": []}})
                 st.rerun()
-    
+
+    # Get list all the chats in the DB that are not archived, default, or active
+    chats = list(ss.db.chats.find({"archived": False}, {"name": 1, "created_at": 1}))
     other_chats = [c for c in chats if c["name"] not in ["Scratch Pad", ss.active_chat["name"]]]
     
     # Add a divider if there are other chats
@@ -106,8 +112,6 @@ def manage_sidebar():
         with col2:
             if st.button("🗑️", key=f"delete_{chat['name']}", help=f"Delete {chat['name']}"):
                 ss.db.chats.delete_one({"name": chat["name"]})
-                if chat["name"] == ss.active_chat["name"]:
-                    ss.active_chat = ss.db.chats.find_one({"name": "Scratch Pad"})
                 st.rerun()
 
 def get_chat_response():
