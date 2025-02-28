@@ -18,12 +18,6 @@ load_dotenv(override=True)
 ss = st.session_state
 
 def get_database():
-    """
-    Connect to MongoDB using credentials from environment variables.
-    
-    Returns:
-        MongoDB database instance for chat storage
-    """
     mongodb_url = os.getenv('MONGODB_URL')
     db_name = os.getenv('MONGODB_DB_NAME')
     client = MongoClient(
@@ -142,24 +136,6 @@ def paint_messages(container):
         with container.chat_message(msg["role"], avatar=avatar):
             st.markdown(msg["content"])
 
-def get_costs_from_response(grok_response, model_name):
-    # Extract usage data from the Grok response
-    usage = grok_response.get("usage", {})
-    prompt_tokens = usage.get("prompt_tokens", 0)
-    completion_tokens = usage.get("completion_tokens", 0)
-
-    # Retrieve model pricing from the database in a single query
-    model_pricing = ss.db.models.find_one({"name": model_name}, {"input_price": 1, "output_price": 1, "_id": 0})
-    input_price_per_million = model_pricing.get("input_price", 0)
-    output_price_per_million = model_pricing.get("output_price", 0)
-
-    # Calculate costs
-    input_cost = (prompt_tokens / 1_000_000) * input_price_per_million
-    output_cost = (completion_tokens / 1_000_000) * output_price_per_million
-    total_cost = input_cost + output_cost
-
-    return total_cost
-
 def get_chat_response():
     system_prompt = ss.active_chat.get("system_prompt")
     model_name = ss.active_chat["model"]
@@ -199,13 +175,25 @@ def get_chat_response():
     # Calculate metrics
     elapsed_time = time.time() - start_time
     tokens = len(content.split())
-    
+
     # Calculate cost
-    total_cost = get_costs_from_response(result, ss.active_chat["model"])
+    usage = result.get("usage", {})
+    prompt_tokens = usage.get("prompt_tokens", 0)
+    completion_tokens = usage.get("completion_tokens", 0)
+
+    # Retrieve model pricing from the database in a single query
+    model_pricing = ss.db.models.find_one({"name": ss.active_chat["model"]}, {"input_price": 1, "output_price": 1, "_id": 0})
+    input_price_per_million = model_pricing.get("input_price", 0)
+    output_price_per_million = model_pricing.get("output_price", 0)
+
+    # Calculate costs
+    input_cost = (prompt_tokens / 1_000_000) * input_price_per_million
+    output_cost = (completion_tokens / 1_000_000) * output_price_per_million
+    total_cost = input_cost + output_cost
     
     # Calculate messages per dollar
     messages_per_dollar = 100 / total_cost if total_cost > 0 else 0
-    
+
     return {
         "text": content,
         "time": elapsed_time,
