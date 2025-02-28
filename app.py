@@ -17,7 +17,6 @@ load_dotenv(override=True)
 
 ss = st.session_state
 
-# ---- Database and Initialization Functions ----
 def get_database():
     """
     Connect to MongoDB using credentials from environment variables.
@@ -36,42 +35,21 @@ def get_database():
     )   
     return client[db_name]
 
-def create_chat(new_chat_name, model, system_prompt=None):
-    current_time = time.time()
-    
-    # Use default system prompt if not provided
-    if system_prompt is None:
-        system_prompt = ss.default_system_prompt
-    
-    new_chat = {
-        "name": new_chat_name,
-        "model": model,
-        "system_prompt": system_prompt,
-        "messages": [],
-        "created_at": current_time,
-        "updated_at": current_time,
-        "archived": False
-    }
-    ss.db.chats.insert_one(new_chat)
-    return new_chat
-
 def initialize():
     ss.initialized = True
     ss.db = get_database()
-    ss.default_system_prompt = ss.db.prompts.find_one({"name": "Default System Prompt"})
-    ss.default_system_prompt = ss.default_system_prompt["content"]
+    ss.default_system_prompt = ss.db.prompts.find_one({"name": "Default System Prompt"}, {"content": 1, "_id": 0})["content"]
     ss.show_metrics = True
     ss.llm_avatar = "🤖"
     ss.user_avatar = "😎"
     ss.active_chat = ss.db.chats.find_one({"name": "Scratch Pad"})
-    ss.active_model_name = ss.active_chat["model"]
     ss.llm_client = {
         'base_url': "https://api.x.ai/v1/chat/completions",
         'api_key': os.environ.get("XAI_API_KEY"),
         'headers': {
             "Content-Type": "application/json"
         },
-        'default_model': ss.active_model_name
+        'default_model': ss.active_chat["model"]
     }
 
 def get_friendly_time(timestamp):
@@ -94,7 +72,7 @@ def get_friendly_time(timestamp):
 def manage_sidebar():
     st.sidebar.markdown("### :blue[Active Chat] 🎯")
     st.sidebar.markdown(f"**Chat Name:** :blue[{ss.active_chat['name']}]")
-    st.sidebar.markdown(f"**Model:** :blue[{ss.active_model_name}]")
+    st.sidebar.markdown(f"**Model:** :blue[{ss.active_chat['model']}]")
     st.sidebar.divider()
     
     st.sidebar.markdown("### :blue[Select Chat] 📚")
@@ -118,7 +96,7 @@ def manage_sidebar():
     with col1:
         if st.button("💬 Scratch Pad", key="default_chat", use_container_width=True):
             ss.active_chat = ss.db.chats.find_one({"name": "Scratch Pad"})
-            ss.active_model_name = ss.active_chat["model"]
+            ss.llm_client['default_model'] = ss.active_chat["model"]
             st.rerun()
     with col2:
         if st.button("🧹", key="clear_default", help="Clear Scratch Pad history"):
@@ -147,14 +125,14 @@ def manage_sidebar():
         with col1:
             if st.button(f"💬 {chat['name']} • {friendly_time}", key=f"chat_{chat['name']}", use_container_width=True):
                 ss.active_chat = ss.db.chats.find_one({"name": chat["name"]})
-                ss.active_model_name = ss.active_chat["model"]
+                ss.llm_client['default_model'] = ss.active_chat["model"]
                 st.rerun()
         with col2:
             if st.button("🗑️", key=f"delete_{chat['name']}", help=f"Delete {chat['name']}"):
                 ss.db.chats.delete_one({"name": chat["name"]})
                 if chat["name"] == ss.active_chat["name"]:
                     ss.active_chat = ss.db.chats.find_one({"name": "Scratch Pad"})
-                    ss.active_model_name = ss.active_chat["model"]
+                    ss.llm_client['default_model'] = ss.active_chat["model"]
                 st.rerun()
 
 def paint_messages(container):
@@ -170,10 +148,10 @@ def get_costs_from_response(grok_response, model_name):
     prompt_tokens = usage.get("prompt_tokens", 0)
     completion_tokens = usage.get("completion_tokens", 0)
 
-    # Retrieve model pricing from the database
-    model = ss.db.models.find_one({"name": model_name})
-    input_price_per_million = model.get("input_price", 0)
-    output_price_per_million = model.get("output_price", 0)
+    # Retrieve model pricing from the database in a single query
+    model_pricing = ss.db.models.find_one({"name": model_name}, {"input_price": 1, "output_price": 1, "_id": 0})
+    input_price_per_million = model_pricing.get("input_price", 0)
+    output_price_per_million = model_pricing.get("output_price", 0)
 
     # Calculate costs
     input_cost = (prompt_tokens / 1_000_000) * input_price_per_million
@@ -223,7 +201,7 @@ def get_chat_response():
     tokens = len(content.split())
     
     # Calculate cost
-    total_cost = get_costs_from_response(result, ss.active_model_name)
+    total_cost = get_costs_from_response(result, ss.active_chat["model"])
     
     # Calculate messages per dollar
     messages_per_dollar = 100 / total_cost if total_cost > 0 else 0
@@ -306,10 +284,26 @@ def render_new_chat_tab():
             elif ss.db.chats.find_one({"name": new_chat_name}):
                 st.error("A chat with this name already exists")
             else:
-                new_chat = create_chat(new_chat_name, model, system_prompt)
+                current_time = time.time()
+                
+                # Use default system prompt if not provided
+                if system_prompt is None:
+                    system_prompt = ss.default_system_prompt
+                
+                new_chat = {
+                    "name": new_chat_name,
+                    "model": model,
+                    "system_prompt": system_prompt,
+                    "messages": [],
+                    "created_at": current_time,
+                    "updated_at": current_time,
+                    "archived": False
+                }
+                ss.db.chats.insert_one(new_chat)
+                new_chat = ss.db.chats.find_one({"name": new_chat_name})
                 if new_chat:
                     ss.active_chat = new_chat
-                    ss.active_model_name = model
+                    ss.llm_client['default_model'] = ss.active_chat["model"]
                     st.success(f"Chat '{new_chat_name}' created successfully!")
                     st.rerun()
 
