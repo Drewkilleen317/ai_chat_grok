@@ -1,5 +1,5 @@
 import os
-import time
+from time import time
 import requests
 from dotenv import load_dotenv
 from pymongo import MongoClient
@@ -47,7 +47,7 @@ def initialize():
     }
 
 def get_friendly_time(timestamp):
-    now = time.time()
+    now = time()
     diff = now - timestamp
     time_actions = {
         lambda d: d < 60: lambda d: "Just now",
@@ -58,7 +58,6 @@ def get_friendly_time(timestamp):
         lambda d: d < 2592000: lambda d: f"{int(d / 604800)}w ago",
         lambda d: True: lambda d: time.strftime('%Y-%m-%d', time.localtime(timestamp))
     }
-    
     for condition, action in time_actions.items():
         if condition(diff):
             return action(diff)
@@ -70,27 +69,11 @@ def manage_sidebar():
     st.sidebar.divider()
     
     st.sidebar.markdown("### :blue[Select Chat] 📚")
-    # Get active chats, excluding archived ones
-    active_chats = list(ss.db.chats.find(
-        {"archived": {"$ne": True}}, 
-        {"name": 1, "created_at": 1}
-    ))
-    
-    # Ensure Scratch Pad is always included and cannot be archived
-    scratch_pad = ss.db.chats.find_one({"name": "Scratch Pad"})
-    if scratch_pad:
-        active_chats.append(scratch_pad)
-        # Ensure Scratch Pad is not archived
-        scratch_pad["archived"] = False
-    
-    # chat_names = [chat["name"] for chat in active_chats]
-    chats = active_chats
-    
+    chats = list(ss.db.chats.find({"archived": {"$ne": True}}, {"name": 1, "created_at": 1}))
     col1, col2 = st.sidebar.columns([7, 1])
     with col1:
         if st.button("💬 Scratch Pad", key="default_chat", use_container_width=True):
             ss.active_chat = ss.db.chats.find_one({"name": "Scratch Pad"})
-            ss.llm_client['default_model'] = ss.active_chat["model"]
             st.rerun()
     with col2:
         if st.button("🧹", key="clear_default", help="Clear Scratch Pad history"):
@@ -119,30 +102,21 @@ def manage_sidebar():
         with col1:
             if st.button(f"💬 {chat['name']} • {friendly_time}", key=f"chat_{chat['name']}", use_container_width=True):
                 ss.active_chat = ss.db.chats.find_one({"name": chat["name"]})
-                ss.llm_client['default_model'] = ss.active_chat["model"]
                 st.rerun()
         with col2:
             if st.button("🗑️", key=f"delete_{chat['name']}", help=f"Delete {chat['name']}"):
                 ss.db.chats.delete_one({"name": chat["name"]})
                 if chat["name"] == ss.active_chat["name"]:
                     ss.active_chat = ss.db.chats.find_one({"name": "Scratch Pad"})
-                    ss.llm_client['default_model'] = ss.active_chat["model"]
                 st.rerun()
 
-def paint_messages(container):
-    messages = ss.db.chats.find_one({"name": ss.active_chat['name']}).get("messages", []) 
-    for msg in messages:
-        avatar = ss.llm_avatar if msg["role"] == "assistant" else ss.user_avatar
-        with container.chat_message(msg["role"], avatar=avatar):
-            st.markdown(msg["content"])
-
 def get_chat_response():
+    ss.active_chat = ss.db.chats.find_one({"name": ss.active_chat['name']})
     system_prompt = ss.active_chat.get("system_prompt")
-    model_name = ss.active_chat["model"]
     history = ss.active_chat["messages"].copy()
     history.insert(0, {"role": "system", "content": system_prompt})
 
-    start_time = time.time()
+    start_time = time()
     response = requests.post(
         ss.llm_client['base_url'],
         headers={
@@ -150,50 +124,34 @@ def get_chat_response():
             "Authorization": f"Bearer {ss.llm_client['api_key']}"
         },
         json={
-            "model": model_name,
+            "model": ss.active_chat["model"],
             "messages": history
         }
     )
-    
+    end_time = time()  
+    elapsed_time = end_time - start_time
+
     if response.status_code != 200:
         st.error(f"API Error {response.status_code}: {response.text}")
         return None
-        
+  
+
     result = response.json()
     content = result["choices"][0]["message"]["content"]
-
-    message = {
-        "role": "assistant",
-        "content": content,
-        "timestamp": time.time()
-    }
+    message = {"role": "assistant","content": content,"timestamp": time()}
     ss.db.chats.update_one({"name": ss.active_chat['name']}, {"$push": {"messages": message}})
     
-    # Refresh the active chat in session state
-    ss.active_chat = ss.db.chats.find_one({"_id": ss.active_chat["_id"]})
-    
-    # Calculate metrics
-    elapsed_time = time.time() - start_time
-    tokens = len(content.split())
-
-    # Calculate cost
     usage = result.get("usage", {})
     prompt_tokens = usage.get("prompt_tokens", 0)
     completion_tokens = usage.get("completion_tokens", 0)
+    tokens = prompt_tokens + completion_tokens
 
-    # Retrieve model pricing from the database in a single query
     model_pricing = ss.db.models.find_one({"name": ss.active_chat["model"]}, {"input_price": 1, "output_price": 1, "_id": 0})
-    input_price_per_million = model_pricing.get("input_price", 0)
-    output_price_per_million = model_pricing.get("output_price", 0)
-
-    # Calculate costs
-    input_cost = (prompt_tokens / 1_000_000) * input_price_per_million
-    output_cost = (completion_tokens / 1_000_000) * output_price_per_million
+    input_cost = (prompt_tokens / 1_000_000) * model_pricing.get("input_price", 0)
+    output_cost = (completion_tokens / 1_000_000) * model_pricing.get("output_price", 0)
     total_cost = input_cost + output_cost
-    
-    # Calculate messages per dollar
     messages_per_dollar = 100 / total_cost if total_cost > 0 else 0
-
+    
     return {
         "text": content,
         "time": elapsed_time,
@@ -205,22 +163,19 @@ def get_chat_response():
 
 def render_chat_tab():
     message_container = st.container(height=900, border=True)
-    paint_messages(message_container)
+    messages = ss.db.chats.find_one({"name": ss.active_chat['name']}).get("messages", []) 
+    for msg in messages:
+        avatar = ss.llm_avatar if msg["role"] == "assistant" else ss.user_avatar
+        with message_container.chat_message(msg["role"], avatar=avatar):
+            st.markdown(msg["content"])
     
     # Chat input
     prompt = st.chat_input("Type your message...")
     if prompt:
         try:
-            user_message = {"role": "user", "content": prompt,
-                "timestamp": time.time()
-            }
-            message = {
-                "role": "user",
-                "content": prompt,
-                "timestamp": time.time()
-            }
+            message = {"role": "user","content": prompt,"timestamp": time()}
             ss.db.chats.update_one({"name": ss.active_chat['name']}, {"$push": {"messages": message}})
-            ss.active_chat = ss.db.chats.find_one({"name": ss.active_chat['name']})
+            
         except Exception as e:
             st.error(f"Error saving user message: {str(e)}")
         
@@ -272,7 +227,7 @@ def render_new_chat_tab():
             elif ss.db.chats.find_one({"name": new_chat_name}):
                 st.error("A chat with this name already exists")
             else:
-                current_time = time.time()
+                current_time = time()
                 
                 # Use default system prompt if not provided
                 if system_prompt is None:
@@ -291,7 +246,6 @@ def render_new_chat_tab():
                 new_chat = ss.db.chats.find_one({"name": new_chat_name})
                 if new_chat:
                     ss.active_chat = new_chat
-                    ss.llm_client['default_model'] = ss.active_chat["model"]
                     st.success(f"Chat '{new_chat_name}' created successfully!")
                     st.rerun()
 
