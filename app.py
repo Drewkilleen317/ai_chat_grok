@@ -502,14 +502,58 @@ def render_models_tab():
 def render_prompts_tab():
     st.warning("⚠️ Prompt Management is currently under construction. This feature will be available soon!")
 
+def render_publish_tab():
+    st.markdown("### Publish 📢")
+    st.warning("🚧 Publish Functionality is currently under construction. Stay tuned for exciting features!")
+    
+    st.markdown("#### Upcoming Features:")
+    st.markdown("- AI Editor Review")
+    st.markdown("  - Spelling and Grammar Corrections")
+    st.markdown("  - Text Editing (Add, Remove, Reorder)")
+    st.markdown("  - Content Outlining")
+    st.markdown("- Audio Podcast Generation")
+    st.markdown("  - Two-Party Discussion Conversion")
+    
+    st.info("We're working on transforming your chats into polished, professional content!")
+
+def render_tabs(selected_tab):
+    if selected_tab == "Chat":
+        render_chat_tab()
+    elif selected_tab == "New Chat":
+        render_new_chat_tab()
+    elif selected_tab == "Archive":
+        render_archive_tab()
+    elif selected_tab == "Models":
+        render_models_tab()
+    elif selected_tab == "Prompts":
+        render_prompts_tab()
+    elif selected_tab == "Publish":
+        render_publish_tab()
+
+def render_tabs(selected_tab):
+    if selected_tab == "Chat":
+        render_chat_tab()
+    elif selected_tab == "New Chat":
+        render_new_chat_tab()
+    elif selected_tab == "Archive":
+        render_archive_tab()
+    elif selected_tab == "Models":
+        render_models_tab()
+    elif selected_tab == "Prompts":
+        render_prompts_tab()
+    elif selected_tab == "Publish":
+        render_publish_tab()
+
 def manage_menu():
-    chat_tab, new_chat_tab, archive_tab, models_tab, prompts_tab = st.tabs([
+    chat_tab, new_chat_tab, archive_tab, models_tab, prompts_tab, publish_tab = st.tabs([
         "💬 Chat", 
         "🆕 New Chat", 
         "🗂️ Archive", 
         "🤖 Models", 
-        "📝 Prompts"
+        "📝 Prompts",
+        "📢 Publish"
     ])
+    
     with chat_tab:
         render_chat_tab()
     with new_chat_tab:
@@ -520,6 +564,8 @@ def manage_menu():
         render_models_tab()
     with prompts_tab:
         render_prompts_tab()
+    with publish_tab:
+        render_publish_tab()
 
 def main():
     if 'initialized' not in st.session_state:
