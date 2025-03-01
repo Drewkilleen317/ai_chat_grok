@@ -118,7 +118,19 @@ def get_chat_response():
     ss.active_chat = ss.db.chats.find_one({"name": ss.active_chat['name']})
     system_prompt = ss.active_chat.get("system_prompt")
     history = ss.active_chat["messages"].copy()
-    history.insert(0, {"role": "system", "content": system_prompt})
+    
+    # Prepare messages ensuring each has only role and content
+    prepared_history = []
+    if system_prompt:
+        prepared_history.append({"role": "system", "content": system_prompt})
+    
+    for msg in history:
+        # Ensure only role and content are included
+        prepared_msg = {
+            "role": msg.get("role"),
+            "content": msg.get("content")
+        }
+        prepared_history.append(prepared_msg)
 
     start_time = time()
     response = requests.post(
@@ -129,7 +141,7 @@ def get_chat_response():
         },
         json={
             "model": ss.active_chat["model"],
-            "messages": history
+            "messages": prepared_history
         }
     )
     end_time = time()  
@@ -138,21 +150,20 @@ def get_chat_response():
     if response.status_code != 200:
         st.error(f"API Error {response.status_code}: {response.text}")
         return None
-  
 
     result = response.json()
     content = result["choices"][0]["message"]["content"]
     message = {"role": "assistant","content": content,"timestamp": time()}
     ss.db.chats.update_one({"name": ss.active_chat['name']}, {"$push": {"messages": message}})
     
-    usage = result.get("usage", {})
-    prompt_tokens = usage.get("prompt_tokens", 0)
-    completion_tokens = usage.get("completion_tokens", 0)
+    usage = result.get("usage")
+    prompt_tokens = usage.get("prompt_tokens")
+    completion_tokens = usage.get("completion_tokens")
     tokens = prompt_tokens + completion_tokens
 
     model_pricing = ss.db.models.find_one({"name": ss.active_chat["model"]}, {"input_price": 1, "output_price": 1, "_id": 0})
-    input_cost = (prompt_tokens / 1_000_000) * model_pricing.get("input_price", 0)
-    output_cost = (completion_tokens / 1_000_000) * model_pricing.get("output_price", 0)
+    input_cost = (prompt_tokens / 1_000_000) * model_pricing.get("input_price")
+    output_cost = (completion_tokens / 1_000_000) * model_pricing.get("output_price")
     total_cost = input_cost + output_cost
     messages_per_dollar = 100 / total_cost if total_cost > 0 else 0
     
@@ -380,15 +391,15 @@ def render_models_tab():
                 # Model Capabilities
                 col1, col2 = st.columns(2)
                 with col1:
-                    text_input = st.checkbox("Text Input", value=current_model.get("text_input", True))
-                    image_input = st.checkbox("Image Input", value=current_model.get("image_input", False))
-                    text_output = st.checkbox("Text Output", value=current_model.get("text_output", True))
-                    image_output = st.checkbox("Image Output", value=current_model.get("image_output", False))
+                    text_input = st.checkbox("Text Input", value=current_model.get("text_input"))
+                    image_input = st.checkbox("Image Input", value=current_model.get("image_input"))
+                    text_output = st.checkbox("Text Output", value=current_model.get("text_output"))
+                    image_output = st.checkbox("Image Output", value=current_model.get("image_output"))
                 
                 with col2:
-                    tools = st.checkbox("Tools", value=current_model.get("tools", False))
-                    functions = st.checkbox("Functions", value=current_model.get("functions", False))
-                    thinking = st.checkbox("Thinking", value=current_model.get("thinking", False))
+                    tools = st.checkbox("Tools", value=current_model.get("tools"))
+                    functions = st.checkbox("Functions", value=current_model.get("functions"))
+                    thinking = st.checkbox("Thinking", value=current_model.get("thinking"))
                 
                 # Model Parameters
                 col3, col4 = st.columns(2)
@@ -397,14 +408,14 @@ def render_models_tab():
                         "Temperature", 
                         min_value=0.0, 
                         max_value=1.0, 
-                        value=current_model.get("temperature", 0.7), 
+                        value=current_model.get("temperature"), 
                         step=0.05
                     )
                     top_p = st.slider(
                         "Top P", 
                         min_value=0.0, 
                         max_value=1.0, 
-                        value=current_model.get("top_p", 0.9), 
+                        value=current_model.get("top_p"), 
                         step=0.05
                     )
                 
@@ -412,12 +423,12 @@ def render_models_tab():
                     max_input_tokens = st.number_input(
                         "Max Input Tokens", 
                         min_value=0, 
-                        value=current_model.get("max_input_tokens", 131072)
+                        value=current_model.get("max_input_tokens")
                     )
                     max_output_tokens = st.number_input(
                         "Max Output Tokens", 
                         min_value=0, 
-                        value=current_model.get("max_output_tokens", 8192)
+                        value=current_model.get("max_output_tokens")
                     )
                 
                 # Pricing
@@ -426,7 +437,7 @@ def render_models_tab():
                     input_price = st.number_input(
                         "Input Price (per million tokens)", 
                         min_value=0.0, 
-                        value=current_model.get("input_price", 2.0), 
+                        value=current_model.get("input_price"), 
                         format="%.2f"
                     )
                 
@@ -434,7 +445,7 @@ def render_models_tab():
                     output_price = st.number_input(
                         "Output Price (per million tokens)", 
                         min_value=0.0, 
-                        value=current_model.get("output_price", 10.0), 
+                        value=current_model.get("output_price"), 
                         format="%.2f"
                     )
                 
@@ -516,56 +527,21 @@ def render_publish_tab():
     
     st.info("We're working on transforming your chats into polished, professional content!")
 
-def render_tabs(selected_tab):
-    if selected_tab == "Chat":
-        render_chat_tab()
-    elif selected_tab == "New Chat":
-        render_new_chat_tab()
-    elif selected_tab == "Archive":
-        render_archive_tab()
-    elif selected_tab == "Models":
-        render_models_tab()
-    elif selected_tab == "Prompts":
-        render_prompts_tab()
-    elif selected_tab == "Publish":
-        render_publish_tab()
-
-def render_tabs(selected_tab):
-    if selected_tab == "Chat":
-        render_chat_tab()
-    elif selected_tab == "New Chat":
-        render_new_chat_tab()
-    elif selected_tab == "Archive":
-        render_archive_tab()
-    elif selected_tab == "Models":
-        render_models_tab()
-    elif selected_tab == "Prompts":
-        render_prompts_tab()
-    elif selected_tab == "Publish":
-        render_publish_tab()
-
 def manage_menu():
-    chat_tab, new_chat_tab, archive_tab, models_tab, prompts_tab, publish_tab = st.tabs([
-        "💬 Chat", 
-        "🆕 New Chat", 
-        "🗂️ Archive", 
-        "🤖 Models", 
-        "📝 Prompts",
-        "📢 Publish"
-    ])
+    tab_actions = {
+        "💬 Chat": render_chat_tab,
+        "🆕 New Chat": render_new_chat_tab,
+        "🗂️ Archive": render_archive_tab,
+        "🤖 Models": render_models_tab,
+        "📝 Prompts": render_prompts_tab,
+        "📢 Publish": render_publish_tab
+    }
     
-    with chat_tab:
-        render_chat_tab()
-    with new_chat_tab:
-        render_new_chat_tab()
-    with archive_tab:
-        render_archive_tab()
-    with models_tab:
-        render_models_tab()
-    with prompts_tab:
-        render_prompts_tab()
-    with publish_tab:
-        render_publish_tab()
+    tabs = st.tabs(list(tab_actions.keys()))
+    
+    for tab, (label, render_func) in zip(tabs, tab_actions.items()):
+        with tab:
+            render_func()
 
 def main():
     if 'initialized' not in st.session_state:
