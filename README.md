@@ -14,6 +14,11 @@ A streamlined chat interface for interacting with language models through X.AI's
 - **Archive Management**: Archive old chats to keep your workspace organized
 - **Centralized LLM Client Configuration**: Efficient management of API connections
 - **Dynamic Message Storage**: Real-time database updates for chat messages
+- **Model Management**: 
+    - Add new models with comprehensive configuration
+    - Edit existing model parameters
+    - Delete unused models
+    - Granular control over model capabilities and pricing
 
 ## Requirements
 
