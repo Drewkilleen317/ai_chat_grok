@@ -277,7 +277,227 @@ def render_archive_tab():
                 st.rerun()  # Refresh to update the list
 
 def render_models_tab():
-    st.warning("⚠️ Model Management is currently under construction. This feature will be available soon!")
+    st.markdown("### Model Management 🤖")
+    
+    # Horizontal radio button for model actions
+    model_action = st.radio(
+        "Select Model Action", 
+        ["Add", "Edit", "Delete"], 
+        horizontal=True
+    )
+    
+    st.divider()
+    
+    # Add Model functionality
+    if model_action == "Add":
+        with st.form("add_model_form", clear_on_submit=True):
+            # Basic Model Information
+            model_name = st.text_input("Model Name", placeholder="Enter model name...")
+            
+            # Model Capabilities
+            col1, col2 = st.columns(2)
+            with col1:
+                text_input = st.checkbox("Text Input", value=True)
+                image_input = st.checkbox("Image Input")
+                text_output = st.checkbox("Text Output", value=True)
+                image_output = st.checkbox("Image Output")
+            
+            with col2:
+                tools = st.checkbox("Tools")
+                functions = st.checkbox("Functions")
+                thinking = st.checkbox("Thinking")
+            
+            # Model Parameters
+            col3, col4 = st.columns(2)
+            with col3:
+                temperature = st.slider("Temperature", min_value=0.0, max_value=1.0, value=0.7, step=0.05)
+                top_p = st.slider("Top P", min_value=0.0, max_value=1.0, value=0.9, step=0.05)
+            
+            with col4:
+                max_input_tokens = st.number_input("Max Input Tokens", min_value=0, value=131072)
+                max_output_tokens = st.number_input("Max Output Tokens", min_value=0, value=8192)
+            
+            # Pricing
+            col5, col6 = st.columns(2)
+            with col5:
+                input_price = st.number_input("Input Price (per million tokens)", min_value=0.0, value=2.0, format="%.2f")
+            
+            with col6:
+                output_price = st.number_input("Output Price (per million tokens)", min_value=0.0, value=10.0, format="%.2f")
+            
+            submitted = st.form_submit_button("Add Model")
+            
+            if submitted:
+                if not model_name:
+                    st.error("Model Name is required!")
+                else:
+                    # Prepare model document
+                    new_model = {
+                        "name": model_name,
+                        "temperature": temperature,
+                        "top_p": top_p,
+                        "input_price": input_price,
+                        "output_price": output_price,
+                        "text_input": text_input,
+                        "image_input": image_input,
+                        "text_output": text_output,
+                        "image_output": image_output,
+                        "tools": tools,
+                        "functions": functions,
+                        "thinking": thinking,
+                        "max_output_tokens": max_output_tokens,
+                        "max_input_tokens": max_input_tokens,
+                        "created_at": time()
+                    }
+                    
+                    # Check if model already exists
+                    existing_model = ss.db.models.find_one({"name": model_name})
+                    if existing_model:
+                        st.error(f"Model '{model_name}' already exists!")
+                    else:
+                        # Insert new model
+                        ss.db.models.insert_one(new_model)
+                        st.success(f"Model '{model_name}' added successfully!")
+    
+    # Edit Model functionality
+    if model_action == "Edit":
+        # Retrieve all models 
+        available_models = list(model["name"] for model in ss.db.models.find())
+        
+        if not available_models:
+            st.warning("No models available for editing.")
+        else:
+            with st.form("edit_model_form", clear_on_submit=True):
+                # Model selection
+                model_to_edit = st.selectbox(
+                    "Select Model to Edit", 
+                    available_models
+                )
+                
+                # Retrieve current model details
+                current_model = ss.db.models.find_one({"name": model_to_edit})
+                
+                # Model Capabilities
+                col1, col2 = st.columns(2)
+                with col1:
+                    text_input = st.checkbox("Text Input", value=current_model.get("text_input", True))
+                    image_input = st.checkbox("Image Input", value=current_model.get("image_input", False))
+                    text_output = st.checkbox("Text Output", value=current_model.get("text_output", True))
+                    image_output = st.checkbox("Image Output", value=current_model.get("image_output", False))
+                
+                with col2:
+                    tools = st.checkbox("Tools", value=current_model.get("tools", False))
+                    functions = st.checkbox("Functions", value=current_model.get("functions", False))
+                    thinking = st.checkbox("Thinking", value=current_model.get("thinking", False))
+                
+                # Model Parameters
+                col3, col4 = st.columns(2)
+                with col3:
+                    temperature = st.slider(
+                        "Temperature", 
+                        min_value=0.0, 
+                        max_value=1.0, 
+                        value=current_model.get("temperature", 0.7), 
+                        step=0.05
+                    )
+                    top_p = st.slider(
+                        "Top P", 
+                        min_value=0.0, 
+                        max_value=1.0, 
+                        value=current_model.get("top_p", 0.9), 
+                        step=0.05
+                    )
+                
+                with col4:
+                    max_input_tokens = st.number_input(
+                        "Max Input Tokens", 
+                        min_value=0, 
+                        value=current_model.get("max_input_tokens", 131072)
+                    )
+                    max_output_tokens = st.number_input(
+                        "Max Output Tokens", 
+                        min_value=0, 
+                        value=current_model.get("max_output_tokens", 8192)
+                    )
+                
+                # Pricing
+                col5, col6 = st.columns(2)
+                with col5:
+                    input_price = st.number_input(
+                        "Input Price (per million tokens)", 
+                        min_value=0.0, 
+                        value=current_model.get("input_price", 2.0), 
+                        format="%.2f"
+                    )
+                
+                with col6:
+                    output_price = st.number_input(
+                        "Output Price (per million tokens)", 
+                        min_value=0.0, 
+                        value=current_model.get("output_price", 10.0), 
+                        format="%.2f"
+                    )
+                
+                submitted = st.form_submit_button("Save Model")
+                
+                if submitted:
+                    # Prepare updated model document
+                    updated_model = {
+                        "name": model_to_edit,
+                        "temperature": temperature,
+                        "top_p": top_p,
+                        "input_price": input_price,
+                        "output_price": output_price,
+                        "text_input": text_input,
+                        "image_input": image_input,
+                        "text_output": text_output,
+                        "image_output": image_output,
+                        "tools": tools,
+                        "functions": functions,
+                        "thinking": thinking,
+                        "max_output_tokens": max_output_tokens,
+                        "max_input_tokens": max_input_tokens,
+                        "updated_at": time()
+                    }
+                    
+                    # Update the model in the database
+                    ss.db.models.replace_one({"name": model_to_edit}, updated_model)
+                    st.success(f"Model '{model_to_edit}' updated successfully!")
+    
+    # Delete Model functionality
+    if model_action == "Delete":
+        # Retrieve all models except the default
+        available_models = list(model["name"] for model in ss.db.models.find({"name": {"$ne": "grok-2-latest"}}))
+        
+        if not available_models:
+            st.warning("No models available for deletion.")
+        else:
+            with st.form("delete_model_form", clear_on_submit=True):
+                model_to_delete = st.selectbox(
+                    "Select Model to Delete", 
+                    available_models,
+                    help="Note: 'grok-2-latest' cannot be deleted"
+                )
+                
+                submitted = st.form_submit_button("Delete Model")
+                
+                if submitted:
+                    # Double-check the model is not the default
+                    if model_to_delete == "grok-2-latest":
+                        st.error("Cannot delete the default model 'grok-2-latest'.")
+                    else:
+                        # Confirm deletion
+                        confirm = st.checkbox("I understand this action cannot be undone")
+                        if confirm:
+                            # Perform deletion
+                            result = ss.db.models.delete_one({"name": model_to_delete})
+                            
+                            if result.deleted_count > 0:
+                                st.success(f"Model '{model_to_delete}' deleted successfully!")
+                            else:
+                                st.error(f"Could not delete model '{model_to_delete}'.")
+
+    st.divider()
 
 def render_prompts_tab():
     st.warning("⚠️ Prompt Management is currently under construction. This feature will be available soon!")
