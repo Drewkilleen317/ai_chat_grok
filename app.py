@@ -511,7 +511,130 @@ def render_models_tab():
     st.divider()
 
 def render_prompts_tab():
-    st.warning("⚠️ Prompt Management is currently under construction. This feature will be available soon!")
+    st.markdown("### System Prompt Management 📝")
+    
+    # Horizontal radio button for prompt actions
+    prompt_action = st.radio(
+        "Select Prompt Action", 
+        ["Add", "Edit", "Delete"], 
+        horizontal=True
+    )
+    
+    st.divider()
+    
+    # Add Prompt functionality
+    if prompt_action == "Add":
+        with st.form("add_prompt_form", clear_on_submit=True):
+            # Basic Prompt Information
+            prompt_name = st.text_input("Prompt Name", placeholder="Enter prompt name...")
+            prompt_content = st.text_area(
+                "Prompt Content", 
+                placeholder="Enter system prompt content...",
+                height=300
+            )
+            
+            submitted = st.form_submit_button("Add Prompt")
+            
+            if submitted:
+                if not prompt_name:
+                    st.error("Prompt Name is required!")
+                elif not prompt_content:
+                    st.error("Prompt Content is required!")
+                else:
+                    # Prepare prompt document
+                    new_prompt = {
+                        "name": prompt_name,
+                        "content": prompt_content,
+                        "created_at": time()
+                    }
+                    
+                    # Check if prompt already exists
+                    existing_prompt = ss.db.prompts.find_one({"name": prompt_name})
+                    if existing_prompt:
+                        st.error(f"Prompt '{prompt_name}' already exists!")
+                    else:
+                        # Insert new prompt
+                        ss.db.prompts.insert_one(new_prompt)
+                        st.success(f"Prompt '{prompt_name}' added successfully!")
+    
+    # Edit Prompt functionality
+    if prompt_action == "Edit":
+        # Retrieve all prompts
+        available_prompts = list(prompt["name"] for prompt in ss.db.prompts.find())
+        
+        if not available_prompts:
+            st.warning("No prompts available for editing.")
+        else:
+            with st.form("edit_prompt_form", clear_on_submit=False):
+                # Prompt selection
+                prompt_to_edit = st.selectbox(
+                    "Select Prompt to Edit", 
+                    available_prompts
+                )
+                
+                # Retrieve current prompt details
+                current_prompt = ss.db.prompts.find_one({"name": prompt_to_edit})
+                
+                # Prompt content
+                prompt_content = st.text_area(
+                    "Prompt Content", 
+                    value=current_prompt.get("content", ""),
+                    height=300
+                )
+                
+                submitted = st.form_submit_button("Save Prompt")
+                
+                if submitted:
+                    if not prompt_content:
+                        st.error("Prompt Content is required!")
+                    else:
+                        # Prepare updated prompt document
+                        updated_prompt = {
+                            "name": prompt_to_edit,
+                            "content": prompt_content,
+                            "updated_at": time()
+                        }
+                        
+                        # Preserve created_at if it exists
+                        if "created_at" in current_prompt:
+                            updated_prompt["created_at"] = current_prompt["created_at"]
+                        
+                        # Update the prompt in the database
+                        ss.db.prompts.replace_one({"name": prompt_to_edit}, updated_prompt)
+                        st.success(f"Prompt '{prompt_to_edit}' updated successfully!")
+    
+    # Delete Prompt functionality
+    if prompt_action == "Delete":
+        # Retrieve all prompts except the default
+        available_prompts = list(prompt["name"] for prompt in ss.db.prompts.find({"name": {"$ne": "Default System Prompt"}}))
+        
+        if not available_prompts:
+            st.warning("No prompts available for deletion.")
+        else:
+            with st.form("delete_prompt_form", clear_on_submit=True):
+                prompt_to_delete = st.selectbox(
+                    "Select Prompt to Delete", 
+                    available_prompts,
+                    help="Note: 'Default System Prompt' cannot be deleted"
+                )
+                
+                submitted = st.form_submit_button("Delete Prompt")
+                
+                if submitted:
+                    # Double-check the prompt is not the default
+                    if prompt_to_delete == "Default System Prompt":
+                        st.error("Cannot delete the 'Default System Prompt'.")
+                    else:
+                        # Confirm deletion
+                        confirm = st.checkbox("I understand this action cannot be undone")
+                        if confirm:
+                            # Perform deletion
+                            result = ss.db.prompts.delete_one({"name": prompt_to_delete})
+                            
+                            if result.deleted_count > 0:
+                                st.success(f"Prompt '{prompt_to_delete}' deleted successfully!")
+                            else:
+                                st.error(f"Could not delete prompt '{prompt_to_delete}'.")
 
 def render_publish_tab():
     st.markdown("### Publish 📢")
