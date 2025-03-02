@@ -527,6 +527,7 @@ def render_prompts_tab():
         with st.form("add_prompt_form", clear_on_submit=True):
             # Basic Prompt Information
             prompt_name = st.text_input("Prompt Name", placeholder="Enter prompt name...")
+            prompt_description = st.text_input("Description", placeholder="Brief description of the prompt...")
             prompt_content = st.text_area(
                 "Prompt Content", 
                 placeholder="Enter system prompt content...",
@@ -544,6 +545,7 @@ def render_prompts_tab():
                     # Prepare prompt document
                     new_prompt = {
                         "name": prompt_name,
+                        "description": prompt_description,
                         "content": prompt_content,
                         "created_at": time()
                     }
@@ -575,6 +577,12 @@ def render_prompts_tab():
                 # Retrieve current prompt details
                 current_prompt = ss.db.prompts.find_one({"name": prompt_to_edit})
                 
+                # Prompt description
+                prompt_description = st.text_input(
+                    "Description", 
+                    value=current_prompt.get("description", "")
+                )
+                
                 # Prompt content
                 prompt_content = st.text_area(
                     "Prompt Content", 
@@ -591,6 +599,7 @@ def render_prompts_tab():
                         # Prepare updated prompt document
                         updated_prompt = {
                             "name": prompt_to_edit,
+                            "description": prompt_description,
                             "content": prompt_content,
                             "updated_at": time()
                         }
