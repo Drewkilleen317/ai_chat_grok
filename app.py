@@ -32,11 +32,11 @@ def get_database():
 def initialize():
     ss.initialized = True
     ss.db = get_database()
-    ss.default_system_prompt = ss.db.prompts.find_one({"name": "Default System Prompt"}, {"content": 1, "_id": 0})["content"]
     ss.show_metrics = True
     ss.llm_avatar = "🤖"
     ss.user_avatar = "😎"
     ss.active_chat = ss.db.chats.find_one({"name": "Scratch Pad"})
+    
     ss.llm_client = {
         'base_url': "https://api.x.ai/v1/chat/completions",
         'api_key': os.environ.get("XAI_API_KEY"),
@@ -115,22 +115,8 @@ def manage_sidebar():
                 st.rerun()
 
 def get_chat_response():
-    ss.active_chat = ss.db.chats.find_one({"name": ss.active_chat['name']})
-    system_prompt = ss.active_chat.get("system_prompt")
     history = ss.active_chat["messages"].copy()
-    
-    # Prepare messages ensuring each has only role and content
-    prepared_history = []
-    if system_prompt:
-        prepared_history.append({"role": "system", "content": system_prompt})
-    
-    for msg in history:
-        # Ensure only role and content are included
-        prepared_msg = {
-            "role": msg.get("role"),
-            "content": msg.get("content")
-        }
-        prepared_history.append(prepared_msg)
+    history.insert(0, {"role": "system", "content": ss.active_chat["system_prompt"]})
 
     start_time = time()
     response = requests.post(
@@ -141,7 +127,7 @@ def get_chat_response():
         },
         json={
             "model": ss.active_chat["model"],
-            "messages": prepared_history
+            "messages": history
         }
     )
     end_time = time()  
@@ -177,7 +163,7 @@ def get_chat_response():
     }
 
 def render_chat_tab():
-    message_container = st.container(height=900, border=True)
+    message_container = st.container(height=750, border=True)
     messages = ss.db.chats.find_one({"name": ss.active_chat['name']}).get("messages", []) 
     for msg in messages:
         avatar = ss.llm_avatar if msg["role"] == "assistant" else ss.user_avatar
@@ -225,16 +211,31 @@ def render_new_chat_tab():
         except Exception as e:
             st.error(f"Error fetching models: {str(e)}")
             available_models = []
+        
         model = st.selectbox(
             "Select Model",
             options=available_models,
             help="Choose model - different models have different capabilities"
         )
-        system_prompt = st.text_area(
-            label="System Instruction",
-            value=ss.default_system_prompt,
-            help="Provide overarching guidelines for the AI's behavior"
+        
+        try:
+            db_prompts = list(ss.db.prompts.find())
+            available_prompts = [(p["name"], p["content"]) for p in db_prompts]
+        except Exception as e:
+            st.error(f"Error fetching prompts: {str(e)}")
+            available_prompts = []
+            
+        selected_prompt = st.selectbox(
+            "Select System Prompt",
+            options=[p[0] for p in available_prompts],
+            help="Choose the system prompt that defines how the AI should behave"
         )
+        
+        # Show the content of the selected prompt
+        if selected_prompt:
+            prompt_content = next((p[1] for p in available_prompts if p[0] == selected_prompt), "")
+            st.text_area("System Prompt Content", value=prompt_content, disabled=True, height=150)
+        
         submitted = st.form_submit_button("Create Chat", use_container_width=True)
         if submitted:
             if not new_chat_name:
@@ -244,9 +245,8 @@ def render_new_chat_tab():
             else:
                 current_time = time()
                 
-                # Use default system prompt if not provided
-                if system_prompt is None:
-                    system_prompt = ss.default_system_prompt
+                # Get the selected prompt content
+                system_prompt = next((p[1] for p in available_prompts if p[0] == selected_prompt), "")
                 
                 new_chat = {
                     "name": new_chat_name,
