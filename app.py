@@ -115,8 +115,8 @@ def manage_sidebar():
                 st.rerun()
 
 def get_chat_response():
-    history = ss.active_chat["messages"].copy()
-    history.insert(0, {"role": "system", "content": ss.active_chat["system_prompt"]})
+    messages = ss.active_chat["messages"].copy()
+    messages.insert(0, {"role": "system", "content": ss.active_chat["system_prompt"]})
 
     start_time = time()
     response = requests.post(
@@ -127,7 +127,7 @@ def get_chat_response():
         },
         json={
             "model": ss.active_chat["model"],
-            "messages": history
+            "messages": messages
         }
     )
     end_time = time()  
@@ -169,22 +169,13 @@ def render_chat_tab():
         avatar = ss.llm_avatar if msg["role"] == "assistant" else ss.user_avatar
         with message_container.chat_message(msg["role"], avatar=avatar):
             st.markdown(msg["content"])
-    
-    # Chat input
+
     prompt = st.chat_input("Type your message...")
     if prompt:
-        try:
-            message = {"role": "user","content": prompt,"timestamp": time()}
-            ss.db.chats.update_one({"name": ss.active_chat['name']}, {"$push": {"messages": message}})
-            
-        except Exception as e:
-            st.error(f"Error saving user message: {str(e)}")
-        
-        # Immediately display user message in chat container
+        message = {"role": "user","content": prompt,"timestamp": time()}
+        ss.db.chats.update_one({"name": ss.active_chat['name']}, {"$push": {"messages": message}})
         with message_container.chat_message("user", avatar=ss.user_avatar):
             st.markdown(prompt)
-            
-        # Get AI response
         if response_data := get_chat_response():
             with message_container.chat_message("assistant", avatar=ss.llm_avatar):
                 st.markdown(response_data["text"])
