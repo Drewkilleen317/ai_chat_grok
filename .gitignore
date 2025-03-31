@@ -3,3 +3,9 @@ venv/
 __pycache__/
 .DS_Store
 .env
+# Ignore TOML files for secrets protection
+*.toml
+# Ignore .streamlit directory which contains secrets
+.streamlit/
+# Exception for project configuration if needed
+!pyproject.toml

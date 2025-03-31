@@ -1,10 +1,11 @@
 import os
 from time import time
 import requests
-from dotenv import load_dotenv
 from pymongo import MongoClient
 import streamlit as st
-from openai import OpenAI
+
+MONGODB_DB_NAME = "chat_grok"
+MONGODB_URL = "mongodb://localhost:27017/"
 
 st.set_page_config(
     page_icon="💬", 
@@ -13,13 +14,12 @@ st.set_page_config(
     initial_sidebar_state="expanded",
     menu_items=None
 )
-load_dotenv(override=True)
 
 ss = st.session_state
 
 def get_database():
-    mongodb_url = os.getenv('MONGODB_URL')
-    db_name = os.getenv('MONGODB_DB_NAME')
+    mongodb_url = MONGODB_URL
+    db_name = MONGODB_DB_NAME
     client = MongoClient(
         mongodb_url,
         maxPoolSize=50,           # Maximum number of connections in the pool
@@ -35,20 +35,12 @@ def initialize():
     ss.show_metrics = True
     ss.llm_avatar = "🤖"
     ss.user_avatar = "😎"
-    ss.active_chat = ss.db.chats.find_one({"name": "Scratch Pad"})
     
-    ss.llm_client = {
-        'base_url': "https://api.x.ai/v1/chat/completions",
-        'api_key': os.environ.get("XAI_API_KEY"),
-        'headers': {
-            "Content-Type": "application/json"
-        },
-        'default_model': ss.active_chat["model"]
-    }
+    ss.active_chat = ss.db.chats.find_one({"name": "Scratch Pad"})
+    ss.base_url = st.secrets["XAI_BASE_URL"]
+    ss.api_key = st.secrets["XAI_API_KEY"]
 
-def get_friendly_time(timestamp):
-    now = time()
-    diff = now - timestamp
+def get_friendly_time(seconds_ago):
     time_actions = {
         lambda d: d < 60: lambda d: "Just now",
         lambda d: d < 3600: lambda d: f"{int(d / 60)}m ago",
@@ -56,11 +48,11 @@ def get_friendly_time(timestamp):
         lambda d: d < 172800: lambda d: "Yesterday",
         lambda d: d < 604800: lambda d: f"{int(d / 86400)}d ago",
         lambda d: d < 2592000: lambda d: f"{int(d / 604800)}w ago",
-        lambda d: True: lambda d: time.strftime('%Y-%m-%d', time.localtime(timestamp))
+        lambda d: True: lambda d: "Long ago"
     }
     for condition, action in time_actions.items():
-        if condition(diff):
-            return action(diff)
+        if condition(seconds_ago):
+            return action(seconds_ago)
 
 def manage_sidebar():
     st.sidebar.markdown("### :blue[Active Chat] 🎯")
@@ -85,7 +77,7 @@ def manage_sidebar():
 
     # Create and sense if clicked the current chat if not the default chat (Scratch Pad) And the clear button
     if ss.active_chat["name"] != "Scratch Pad":
-        friendly_time = get_friendly_time(ss.active_chat.get('created_at'))
+        friendly_time = get_friendly_time(time() - ss.active_chat.get('created_at'))
         col1, col2 = st.sidebar.columns([7, 1])
         with col1:
             st.button(f"👉 {ss.active_chat['name']} • {friendly_time}", key="current_chat", use_container_width=True)
@@ -103,7 +95,7 @@ def manage_sidebar():
         st.sidebar.divider()
     
     for chat in other_chats:
-        friendly_time = get_friendly_time(chat.get('created_at'))
+        friendly_time = get_friendly_time(time() - chat.get('created_at'))
         col1, col2 = st.sidebar.columns([7, 1])
         with col1:
             if st.button(f"💬 {chat['name']} • {friendly_time}", key=f"chat_{chat['name']}", use_container_width=True):
@@ -115,18 +107,20 @@ def manage_sidebar():
                 st.rerun()
 
 def get_chat_response():
-    messages = ss.active_chat["messages"].copy()
-    messages.insert(0, {"role": "system", "content": ss.active_chat["system_prompt"]})
-
+    # Refresh active_chat to ensure we have the latest messages
+    fresh_chat = ss.db.chats.find_one({"name": ss.active_chat['name']})
+    messages = fresh_chat["messages"].copy()
+    messages.insert(0, {"role": "system", "content": fresh_chat["system_prompt"]})
+    
     start_time = time()
     response = requests.post(
-        ss.llm_client['base_url'],
+        url = ss.base_url,
         headers={
-            **ss.llm_client['headers'],
-            "Authorization": f"Bearer {ss.llm_client['api_key']}"
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {ss.api_key}"
         },
         json={
-            "model": ss.active_chat["model"],
+            "model": fresh_chat["model"],
             "messages": messages
         }
     )
@@ -163,8 +157,10 @@ def get_chat_response():
     }
 
 def render_chat_tab():
-    message_container = st.container(height=750, border=True)
-    messages = ss.db.chats.find_one({"name": ss.active_chat['name']}).get("messages", []) 
+    message_container = st.container(height=500, border=True)
+    # Refresh active_chat to get the latest messages
+    ss.active_chat = ss.db.chats.find_one({"name": ss.active_chat['name']})
+    messages = ss.active_chat.get("messages", [])
     for msg in messages:
         avatar = ss.llm_avatar if msg["role"] == "assistant" else ss.user_avatar
         with message_container.chat_message(msg["role"], avatar=avatar):
@@ -174,11 +170,15 @@ def render_chat_tab():
     if prompt:
         message = {"role": "user","content": prompt,"timestamp": time()}
         ss.db.chats.update_one({"name": ss.active_chat['name']}, {"$push": {"messages": message}})
+        # Refresh the active_chat after adding the user message
+        ss.active_chat = ss.db.chats.find_one({"name": ss.active_chat['name']})
         with message_container.chat_message("user", avatar=ss.user_avatar):
             st.markdown(prompt)
         if response_data := get_chat_response():
             with message_container.chat_message("assistant", avatar=ss.llm_avatar):
                 st.markdown(response_data["text"])
+            # Refresh the active_chat after getting response
+            ss.active_chat = ss.db.chats.find_one({"name": ss.active_chat['name']})
             if ss.show_metrics:
                 st.info(
                     f"Time: {response_data['time']:.2f}s | "
