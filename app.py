@@ -4,9 +4,6 @@ import requests
 from pymongo import MongoClient
 import streamlit as st
 
-MONGODB_DB_NAME = "chat_grok"
-MONGODB_URL = "mongodb://localhost:27017/"
-
 st.set_page_config(
     page_icon="💬", 
     layout="wide", 
@@ -18,8 +15,9 @@ st.set_page_config(
 ss = st.session_state
 
 def get_database():
-    mongodb_url = MONGODB_URL
-    db_name = MONGODB_DB_NAME
+    # Read MongoDB connection details from Streamlit secrets
+    mongodb_url = st.secrets["MONGODB_URL"]
+    db_name = st.secrets["MONGODB_DB_NAME"]
     client = MongoClient(
         mongodb_url,
         maxPoolSize=50,           # Maximum number of connections in the pool
@@ -35,8 +33,15 @@ def initialize():
     ss.show_metrics = True
     ss.llm_avatar = "🤖"
     ss.user_avatar = "😎"
-    
+    ss.use_web_search = True
+    ss.show_intermediate_steps = False
     ss.active_chat = ss.db.chats.find_one({"name": "Scratch Pad"})
+    
+    # Get the active model's framework
+    active_model_name = ss.active_chat.get("model")
+    model_info = ss.db.models.find_one({"name": active_model_name})
+    ss.active_framework = model_info.get("framework", "unknown") if model_info else "unknown"
+    
     ss.base_url = st.secrets["XAI_BASE_URL"]
     ss.api_key = st.secrets["XAI_API_KEY"]
 
@@ -53,11 +58,74 @@ def get_friendly_time(seconds_ago):
     for condition, action in time_actions.items():
         if condition(seconds_ago):
             return action(seconds_ago)
+            
+def update_active_framework():
+    """Update the active_framework based on the active chat's model."""
+    if 'active_chat' in ss and ss.active_chat:
+        active_model_name = ss.active_chat.get("model")
+        model_info = ss.db.models.find_one({"name": active_model_name})
+        ss.active_framework = model_info.get("framework", "unknown") if model_info else "unknown"
+
+def search_web(query):
+    try:
+        # Using Serper API for Google Search results
+        response = requests.get(
+            "https://google.serper.dev/search",
+            headers={
+                "X-API-KEY": st.secrets["SERPER_API_KEY"],
+                "Content-Type": "application/json"
+            },
+            params={
+                "q": query
+            }
+        )
+        
+        if response.status_code != 200:
+            st.error(f"Web search failed with status code: {response.status_code}")
+            return ""
+            
+        data = response.json()
+        results = []
+        
+        # Extract organic search results
+        organic = data.get('organic', [])
+        for result in organic[:3]:
+            title = result.get('title', '')
+            snippet = result.get('snippet', '')
+            if snippet:
+                results.append(f"{title}: {snippet}")
+                
+        # Extract knowledge graph if available
+        knowledge_graph = data.get('knowledgeGraph', {})
+        if knowledge_graph:
+            title = knowledge_graph.get('title')
+            description = knowledge_graph.get('description')
+            if title and description:
+                results.insert(0, f"{title}: {description}")
+                
+        if not results:
+            st.info("No relevant search results found")
+            return ""
+            
+        # Combine results into a single context string
+        context = "\n".join([f"- {result}" for result in results])
+        return f"Recent web search results:\n{context}"        
+    except Exception as e:
+        st.error(f"Web search error: {str(e)}")
+        return ""
 
 def manage_sidebar():
     st.sidebar.markdown("### :blue[Active Chat] 🎯")
     st.sidebar.markdown(f"**Chat Name:** :blue[{ss.active_chat['name']}]")
     st.sidebar.markdown(f"**Model:** :blue[{ss.active_chat['model']}]")
+    st.sidebar.markdown(f"**Framework:** :blue[{ss.active_framework}]")
+    
+    # Add web search toggle
+    ss.use_web_search = st.sidebar.toggle("Enable Web Search", value=ss.use_web_search, help="Enhance responses with web search")
+    
+    # Intermediate steps are kept but hidden from users
+    ss.show_intermediate_steps = False
+    
     st.sidebar.divider()
     st.sidebar.markdown("### :blue[Select Chat] 📚")
 
@@ -69,6 +137,7 @@ def manage_sidebar():
     with col1:
         if st.button("💬 Scratch Pad", key="default_chat", use_container_width=True):
             ss.active_chat = ss.db.chats.find_one({"name": "Scratch Pad"})
+            update_active_framework()
             st.rerun()
     with col2:
         if st.button("🧹", key="clear_default", help="Clear Scratch Pad history"):
@@ -100,6 +169,7 @@ def manage_sidebar():
         with col1:
             if st.button(f"💬 {chat['name']} • {friendly_time}", key=f"chat_{chat['name']}", use_container_width=True):
                 ss.active_chat = ss.db.chats.find_one({"name": chat["name"]})
+                update_active_framework()
                 st.rerun()
         with col2:
             if st.button("🗑️", key=f"delete_{chat['name']}", help=f"Delete {chat['name']}"):
@@ -112,12 +182,56 @@ def get_chat_response():
     messages = fresh_chat["messages"].copy()
     messages.insert(0, {"role": "system", "content": fresh_chat["system_prompt"]})
     
+    # Get the last user message
+    last_user_message = next((msg for msg in reversed(messages) if msg["role"] == "user"), None)
+    
+    # Enhance with web search if enabled
+    web_results = ""
+    if ss.use_web_search and last_user_message:
+        web_results = search_web(last_user_message["content"])
+        if web_results:
+            context_message = {
+                "role": "system",
+                "content": f"Additional context from web search: {web_results}"
+            }
+            messages.append(context_message)
+
+    # Make API request to LLM
     start_time = time()
+    
+    # Get the current model information
+    model_info = ss.db.models.find_one({"name": fresh_chat["model"]})
+    if not model_info:
+        st.error(f"Model '{fresh_chat['model']}' not found in database")
+        return None
+        
+    # Get the framework information for this model
+    framework_name = model_info.get("framework", "")
+    framework_info = ss.db.frameworks.find_one({"name": framework_name})
+    
+    if not framework_info:
+        st.error(f"Framework '{framework_name}' not found in database")
+        return None
+    
+    # Get the API endpoint and key for this framework
+    api_base_url = framework_info.get("base_url")
+    api_key_name = framework_info.get("api_key_name")
+    
+    if not api_base_url or not api_key_name:
+        st.error(f"Framework '{framework_name}' is missing API configuration")
+        return None
+    
+    # Get the actual API key from secrets
+    api_key = st.secrets.get(api_key_name)
+    if not api_key:
+        st.error(f"API key '{api_key_name}' not found in secrets")
+        return None
+    
     response = requests.post(
-        url = ss.base_url,
+        url=api_base_url,
         headers={
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {ss.api_key}"
+            "Authorization": f"Bearer {api_key}"
         },
         json={
             "model": fresh_chat["model"],
@@ -131,10 +245,13 @@ def get_chat_response():
         st.error(f"API Error {response.status_code}: {response.text}")
         return None
 
+    # Process response
     result = response.json()
     content = result["choices"][0]["message"]["content"]
-    message = {"role": "assistant","content": content,"timestamp": time()}
+    message = {"role": "assistant", "content": content, "timestamp": time()}
     ss.db.chats.update_one({"name": ss.active_chat['name']}, {"$push": {"messages": message}})
+    
+    # Response generation complete (no UI indicators)
     
     usage = result.get("usage")
     prompt_tokens = usage.get("prompt_tokens")
@@ -160,6 +277,7 @@ def render_chat_tab():
     message_container = st.container(height=500, border=True)
     # Refresh active_chat to get the latest messages
     ss.active_chat = ss.db.chats.find_one({"name": ss.active_chat['name']})
+    update_active_framework()
     messages = ss.active_chat.get("messages", [])
     for msg in messages:
         avatar = ss.llm_avatar if msg["role"] == "assistant" else ss.user_avatar
@@ -172,6 +290,7 @@ def render_chat_tab():
         ss.db.chats.update_one({"name": ss.active_chat['name']}, {"$push": {"messages": message}})
         # Refresh the active_chat after adding the user message
         ss.active_chat = ss.db.chats.find_one({"name": ss.active_chat['name']})
+        update_active_framework()
         with message_container.chat_message("user", avatar=ss.user_avatar):
             st.markdown(prompt)
         if response_data := get_chat_response():
@@ -179,6 +298,7 @@ def render_chat_tab():
                 st.markdown(response_data["text"])
             # Refresh the active_chat after getting response
             ss.active_chat = ss.db.chats.find_one({"name": ss.active_chat['name']})
+            update_active_framework()
             if ss.show_metrics:
                 st.info(
                     f"Time: {response_data['time']:.2f}s | "
@@ -252,6 +372,7 @@ def render_new_chat_tab():
                 new_chat = ss.db.chats.find_one({"name": new_chat_name})
                 if new_chat:
                     ss.active_chat = new_chat
+                    update_active_framework()
                     st.success(f"Chat '{new_chat_name}' created successfully!")
                     st.rerun()
 
@@ -288,13 +409,29 @@ def render_models_tab():
         horizontal=True
     )
     
-    st.divider()
-    
     # Add Model functionality
     if model_action == "Add":
         with st.form("add_model_form", clear_on_submit=True):
             # Basic Model Information
-            model_name = st.text_input("Model Name", placeholder="Enter model name...")
+            col_name, col_framework = st.columns(2)
+            with col_name:
+                model_name = st.text_input("Model Name", placeholder="Enter model name...")
+            with col_framework:
+                # Get frameworks from database
+                try:
+                    frameworks = list(ss.db.frameworks.find({}, {"name": 1, "display_name": 1, "_id": 0}))
+                    framework_options = [fw["display_name"] for fw in frameworks]
+                    framework_map = {fw["display_name"]: fw["name"] for fw in frameworks}
+                    
+                    if not framework_options:
+                        st.error("No frameworks available. Please add frameworks first.")
+                        framework_display_name = ""
+                    else:
+                        framework_display_name = st.selectbox("Framework", options=framework_options)
+                except Exception as e:
+                    st.error(f"Error loading frameworks: {str(e)}")
+                    framework_display_name = ""
+                    framework_map = {}
             
             # Model Capabilities
             col1, col2 = st.columns(2)
@@ -333,9 +470,17 @@ def render_models_tab():
                 if not model_name:
                     st.error("Model Name is required!")
                 else:
+                    # Get framework name from selected display name
+                    framework = framework_map.get(framework_display_name, "")
+                    
+                    if not framework:
+                        st.error("Please select a valid framework")
+                        return
+                    
                     # Prepare model document
                     new_model = {
                         "name": model_name,
+                        "framework": framework,  # Add the framework field
                         "temperature": temperature,
                         "top_p": top_p,
                         "input_price": input_price,
@@ -378,6 +523,30 @@ def render_models_tab():
                 
                 # Retrieve current model details
                 current_model = ss.db.models.find_one({"name": model_to_edit})
+                
+                # Framework selection
+                try:
+                    frameworks = list(ss.db.frameworks.find({}, {"name": 1, "display_name": 1, "_id": 0}))
+                    framework_options = [fw["display_name"] for fw in frameworks]
+                    framework_map = {fw["name"]: fw["display_name"] for fw in frameworks}
+                    reverse_framework_map = {fw["display_name"]: fw["name"] for fw in frameworks}
+                    
+                    current_framework = current_model.get("framework", "")
+                    current_framework_display = framework_map.get(current_framework, "")
+                    
+                    if not framework_options:
+                        st.error("No frameworks available. Please add frameworks first.")
+                        framework_display_name = ""
+                    else:
+                        framework_display_name = st.selectbox(
+                            "Framework", 
+                            options=framework_options,
+                            index=framework_options.index(current_framework_display) if current_framework_display in framework_options else 0
+                        )
+                except Exception as e:
+                    st.error(f"Error loading frameworks: {str(e)}")
+                    framework_display_name = ""
+                    reverse_framework_map = {}
                 
                 # Model Capabilities
                 col1, col2 = st.columns(2)
@@ -443,9 +612,17 @@ def render_models_tab():
                 submitted = st.form_submit_button("Save Model")
                 
                 if submitted:
+                    # Get framework name from selected display name
+                    framework = reverse_framework_map.get(framework_display_name, "")
+                    
+                    if not framework:
+                        st.error("Please select a valid framework")
+                        return
+                    
                     # Prepare updated model document
                     updated_model = {
                         "name": model_to_edit,
+                        "framework": framework,  # Add the framework field
                         "temperature": temperature,
                         "top_p": top_p,
                         "input_price": input_price,
@@ -674,3 +851,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    

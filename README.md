@@ -1,144 +1,84 @@
-# Grok Chat
+# Streamlit AI Chat Application Template
 
-A streamlined chat interface for interacting with language models through X.AI's API. This application provides a user-friendly web interface built with Streamlit that allows users to engage in conversations with AI models while storing chat history in MongoDB.
-
-![Grok Chat Interface](https://i.imgur.com/placeholder.png)
+This template provides a foundation for building Streamlit web applications featuring AI chat capabilities, data persistence using MongoDB, and a user interface similar to the `ai_chat_grok` app.
 
 ## Features
 
-- **Multiple Chat Sessions**: Create and manage separate conversations for different topics
-- **Model Selection**: Choose from various available AI models
-- **Custom System Prompts**: Set specific instructions for how the AI should respond
-- **Chat History**: Persistent storage of all conversations in MongoDB
-- **Performance Metrics**: View response time, token count, and cost estimates
-- **Archive Management**: Archive old chats to keep your workspace organized
-- **Centralized LLM Client Configuration**: Efficient management of API connections
-- **Dynamic Message Storage**: Real-time database updates for chat messages
-- **Model Management**: 
-    - Add new models with comprehensive configuration
-    - Edit existing model parameters
-    - Delete unused models
-    - Granular control over model capabilities and pricing
+*   **Streamlit Frontend:** Interactive web UI built with Streamlit.
+*   **MongoDB Backend:** Uses MongoDB to store application data (e.g., chat conversations, user settings, application-specific data). Connection details managed via secrets.
+*   **Chat Interface:**
+    *   Sidebar for managing multiple chat sessions (create, select, clear, delete).
+    *   Main area for conversation display.
+*   **Tabbed Navigation:** Easily organize different application features into tabs.
+*   **AI Integration:** Designed for integration with Large Language Models (LLMs). Requires configuration of API endpoints and keys.
+*   **Optional Web Search:** Includes functionality to augment AI responses with web search results (e.g., using Serper API).
+*   **Secrets Management:** Uses Streamlit's built-in secrets management via `.streamlit/secrets.toml`.
 
-## Requirements
+## Project Structure
 
-- Python 3.8+
-- MongoDB instance (local or cloud-based)
-- X.AI API key
-- Streamlit
-- Requests library
+```
+.
+├── .streamlit/
+│   └── secrets.toml      # API keys and sensitive configuration (DO NOT COMMIT)
+├── venv/                 # Python virtual environment (Git-ignored)
+├── app.py                # Main Streamlit application script
+├── requirements.txt      # Python dependencies
+├── .gitignore            # Git ignore configuration
+└── README.md             # This file
+```
 
-## Installation
+## Setup and Usage
 
-1. **Clone the repository**
-    ```bash
-    git clone https://github.com/drewkilleen317/ai_chat_grok.git
-    cd ai_chat_grok
-    ```
-
-2. **Create a virtual environment**
+1.  **Clone/Copy:** Obtain the template files.
+2.  **Create Virtual Environment:**
     ```bash
     python3 -m venv venv
-    source venv/bin/activate  # On macOS/Linux
-    # On Windows: venv\Scripts\activate
     ```
-
-3. **Install dependencies**
+3.  **Activate Environment:**
+    ```bash
+    source venv/bin/activate
+    ```
+4.  **Install Dependencies:**
     ```bash
     pip install -r requirements.txt
     ```
+5.  **Configure Secrets:**
+    *   Create or edit the `.streamlit/secrets.toml` file.
+    *   Add necessary API keys and configuration, ensuring `MONGODB_URL` and `MONGODB_DB_NAME` are present:
+        ```toml
+        # --- Core App Configuration ---
+        MONGODB_URL="mongodb://localhost:27017/" # Or your MongoDB connection string
+        MONGODB_DB_NAME="your_app_db_name"      # Database name for this application
 
-4. **Set up environment variables**
-    Create a `.env` file in the root directory with the following variables:
+        # --- Required External APIs (Example: Chat & Search) ---
+        # Replace with your actual LLM provider details
+        XAI_BASE_URL = "YOUR_LLM_API_ENDPOINT"
+        XAI_API_KEY = "YOUR_LLM_API_KEY"
+
+        # Required if using web search feature
+        SERPER_API_KEY = "YOUR_SERPER_API_KEY"
+
+        # --- Add other secrets as needed by your app ---
+        # e.g., OTHER_API_KEY = "..."
+        ```
+    *   **Important:** Ensure `.streamlit` and `*.toml` are listed in your `.gitignore` file to prevent accidental commits.
+6.  **Customize `app.py`:**
+    *   Modify the `st.set_page_config` call for your new app's title and icon.
+    *   Update the `initialize` function with default settings relevant to your new app.
+    *   Adapt the `render_*_tab` functions for your application's specific features and UI.
+    *   Adjust the `get_chat_response` function if using different LLMs or modifying the chat logic.
+    *   Update database interaction logic (schemas, queries in functions like `get_database`, `manage_sidebar`, etc.) as needed for your application's data model.
+7.  **Run the App:**
+    ```bash
+    streamlit run app.py
     ```
-    XAI_API_KEY=your_x_ai_api_key
-    MONGODB_URL=your_mongodb_connection_string
-    MONGODB_DB_NAME=chat_grok
-    ```
 
-## Getting an X.AI API Key
+## Customization Points in `app.py`
 
-To use the Grok models via X.AI's API, you'll need to obtain an API key:
+*   **`st.set_page_config`:** App title, icon, layout.
+*   **`initialize`:** Default session state values.
+*   **`manage_sidebar`:** Logic for chat management or other sidebar elements.
+*   **`render_*_tab` functions:** Content and logic for each UI tab.
+*   **`get_chat_response` / `search_web`:** Logic for interacting with external APIs (LLMs, search engines).
+*   **Database Functions:** Modify functions interacting with MongoDB collections based on your app's data model.
 
-1. Visit the [X.AI developer platform](https://x.ai) and sign up for an account
-2. Navigate to the API section in your account dashboard
-3. Create a new API key with appropriate permissions
-4. Copy the generated API key
-5. Add the key to your `.env` file as `XAI_API_KEY=your_key_here`
-
-Note: X.AI may have specific usage tiers and pricing. Check their current documentation for details.
-
-## Setting Up MongoDB
-
-### Option 1: Local MongoDB Installation
-
-1. **Install MongoDB Community Edition**:
-   - **macOS** (using Homebrew):
-     ```bash
-     brew tap mongodb/brew
-     brew install mongodb-community
-     ```
-   - **Windows**: Download and install from the [MongoDB website](https://www.mongodb.com/try/download/community)
-   - **Linux**: Follow distribution-specific instructions from the [MongoDB documentation](https://www.mongodb.com/docs/manual/administration/install-on-linux/)
-
-2. **Start MongoDB service**:
-   - **macOS**:
-     ```bash
-     brew services start mongodb-community
-     ```
-   - **Windows**: MongoDB should run as a service automatically
-   - **Linux**:
-     ```bash
-     sudo systemctl start mongod
-     ```
-
-3. **Verify installation**:
-   ```bash
-   mongo --version
-   mongosh
-   ```
-
-4. **Update your `.env` file**:
-   ```
-   MONGODB_URL=mongodb://localhost:27017
-   MONGODB_DB_NAME=chat_grok
-   ```
-
-### Option 2: MongoDB Atlas (Cloud)
-
-1. Create a free account at [MongoDB Atlas](https://www.mongodb.com/cloud/atlas)
-2. Set up a new cluster (the free tier is sufficient for most users)
-3. Create a database user with read/write permissions
-4. Configure network access (IP whitelist)
-5. Get your connection string from the Atlas dashboard
-6. Update your `.env` file with the connection string:
-   ```
-   MONGODB_URL=mongodb+srv://<username>:<password>@cluster0.mongodb.net/
-   MONGODB_DB_NAME=chat_grok
-   ```
-
-## Running the Application
-
-```bash
-streamlit run app.py
-```
-
-## Development
-
-- Uses Python 3.8+ with type hints
-- Follows PEP 8 style guidelines
-- Utilizes Streamlit for frontend
-- MongoDB for persistent storage
-- Centralized session state management
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-## License
-
-Distributed under the MIT License. See `LICENSE` for more information.
