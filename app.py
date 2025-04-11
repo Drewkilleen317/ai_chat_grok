@@ -41,9 +41,6 @@ def initialize():
     active_model_name = ss.active_chat.get("model")
     model_info = ss.db.models.find_one({"name": active_model_name})
     ss.active_framework = model_info.get("framework", "unknown") if model_info else "unknown"
-    
-    ss.base_url = st.secrets["XAI_BASE_URL"]
-    ss.api_key = st.secrets["XAI_API_KEY"]
 
 def get_friendly_time(seconds_ago):
     time_actions = {
@@ -78,8 +75,7 @@ def search_web(query):
             params={
                 "q": query
             }
-        )
-        
+        ) 
         if response.status_code != 200:
             st.error(f"Web search failed with status code: {response.status_code}")
             return ""
@@ -196,9 +192,6 @@ def get_chat_response():
             }
             messages.append(context_message)
 
-    # Make API request to LLM
-    start_time = time()
-    
     # Get the current model information
     model_info = ss.db.models.find_one({"name": fresh_chat["model"]})
     if not model_info:
@@ -207,60 +200,57 @@ def get_chat_response():
         
     # Get the framework information for this model
     framework_name = model_info.get("framework", "")
-    framework_info = ss.db.frameworks.find_one({"name": framework_name})
     
-    if not framework_info:
-        st.error(f"Framework '{framework_name}' not found in database")
+    if not framework_name:
+        st.error(f"Model '{fresh_chat['model']}' has no associated framework")
         return None
     
-    # Get the API endpoint and key for this framework
-    api_base_url = framework_info.get("base_url")
-    api_key_name = framework_info.get("api_key_name")
+    start_time = time()
     
-    if not api_base_url or not api_key_name:
-        st.error(f"Framework '{framework_name}' is missing API configuration")
+    # Import the appropriate framework module
+    try:
+        # Dynamic import of the framework module
+        framework_module = __import__(f"frameworks.{framework_name}", fromlist=["process_chat"])
+        
+        # Get parameters for the model
+        temperature = model_info.get("temperature", 0.7)
+        top_p = model_info.get("top_p", 0.9)
+        
+        # Call the framework-specific processing function
+        result = framework_module.process_chat(
+            messages=messages,
+            model=fresh_chat["model"],
+            temperature=temperature,
+            top_p=top_p
+        )
+        
+    except ImportError:
+        st.error(f"Framework module for '{framework_name}' not found")
         return None
-    
-    # Get the actual API key from secrets
-    api_key = st.secrets.get(api_key_name)
-    if not api_key:
-        st.error(f"API key '{api_key_name}' not found in secrets")
-        return None
-    
-    response = requests.post(
-        url=api_base_url,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}"
-        },
-        json={
-            "model": fresh_chat["model"],
-            "messages": messages
-        }
-    )
-    end_time = time()  
-    elapsed_time = end_time - start_time
-
-    if response.status_code != 200:
-        st.error(f"API Error {response.status_code}: {response.text}")
+    except Exception as e:
+        st.error(f"Error processing chat: {str(e)}")
         return None
 
-    # Process response
-    result = response.json()
-    content = result["choices"][0]["message"]["content"]
+    # If the framework returned an error
+    if "error" in result:
+        st.error(f"API Error: {result.get('error')}")
+        return None
+    
+    # Extract the response content
+    content = result["content"]
+    prompt_tokens = result["prompt_tokens"]
+    completion_tokens = result["completion_tokens"]
+    elapsed_time = result.get("elapsed_time", time() - start_time)
+    
+    # Add the response to the chat history
     message = {"role": "assistant", "content": content, "timestamp": time()}
     ss.db.chats.update_one({"name": ss.active_chat['name']}, {"$push": {"messages": message}})
     
-    # Response generation complete (no UI indicators)
-    
-    usage = result.get("usage")
-    prompt_tokens = usage.get("prompt_tokens")
-    completion_tokens = usage.get("completion_tokens")
+    # Calculate cost based on token usage
     tokens = prompt_tokens + completion_tokens
-
     model_pricing = ss.db.models.find_one({"name": ss.active_chat["model"]}, {"input_price": 1, "output_price": 1, "_id": 0})
-    input_cost = (prompt_tokens / 1_000_000) * model_pricing.get("input_price")
-    output_cost = (completion_tokens / 1_000_000) * model_pricing.get("output_price")
+    input_cost = (prompt_tokens / 1_000_000) * model_pricing.get("input_price", 0)
+    output_cost = (completion_tokens / 1_000_000) * model_pricing.get("output_price", 0)
     total_cost = input_cost + output_cost
     messages_per_dollar = 100 / total_cost if total_cost > 0 else 0
     
