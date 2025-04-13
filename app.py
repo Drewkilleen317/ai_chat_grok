@@ -1,4 +1,3 @@
-import os
 from time import time
 import requests
 from pymongo import MongoClient
@@ -9,8 +8,7 @@ st.set_page_config(
     layout="wide", 
     page_title="Grok Chat",
     initial_sidebar_state="expanded",
-    menu_items=None
-)
+    menu_items=None)
 
 ss = st.session_state
 
@@ -33,14 +31,11 @@ def initialize():
     ss.show_metrics = True
     ss.llm_avatar = "🤖"
     ss.user_avatar = "😎"
-    ss.use_web_search = True
-    ss.show_intermediate_steps = False
+    ss.use_web_search = False
     ss.active_chat = ss.db.chats.find_one({"name": "Scratch Pad"})
-    
-    # Get the active model's framework
     active_model_name = ss.active_chat.get("model")
     model_info = ss.db.models.find_one({"name": active_model_name})
-    ss.active_framework = model_info.get("framework", "unknown") if model_info else "unknown"
+    ss.active_framework = model_info.get("framework")
 
 def get_friendly_time(seconds_ago):
     time_actions = {
@@ -61,7 +56,7 @@ def update_active_framework():
     if 'active_chat' in ss and ss.active_chat:
         active_model_name = ss.active_chat.get("model")
         model_info = ss.db.models.find_one({"name": active_model_name})
-        ss.active_framework = model_info.get("framework", "unknown") if model_info else "unknown"
+        ss.active_framework = model_info.get("framework")
 
 def search_web(query):
     try:
@@ -88,24 +83,29 @@ def search_web(query):
         for result in organic[:3]:
             title = result.get('title', '')
             snippet = result.get('snippet', '')
-            if snippet:
-                results.append(f"{title}: {snippet}")
+            link = result.get('link', '')
+            if snippet and link:
+                results.append(f"[{title}]({link})\n{snippet}")
                 
         # Extract knowledge graph if available
         knowledge_graph = data.get('knowledgeGraph', {})
         if knowledge_graph:
             title = knowledge_graph.get('title')
             description = knowledge_graph.get('description')
+            link = knowledge_graph.get('link', '')
             if title and description:
-                results.insert(0, f"{title}: {description}")
+                if link:
+                    results.insert(0, f"[{title}]({link})\n{description}")
+                else:
+                    results.insert(0, f"{title}\n{description}")
                 
         if not results:
             st.info("No relevant search results found")
             return ""
             
-        # Combine results into a single context string
+        # Format results as a bulleted list
         context = "\n".join([f"- {result}" for result in results])
-        return f"Recent web search results:\n{context}"        
+        return context        
     except Exception as e:
         st.error(f"Web search error: {str(e)}")
         return ""
@@ -114,22 +114,16 @@ def manage_sidebar():
     st.sidebar.markdown("### :blue[Active Chat] 🎯")
     st.sidebar.markdown(f"**Chat Name:** :blue[{ss.active_chat['name']}]")
     st.sidebar.markdown(f"**Model:** :blue[{ss.active_chat['model']}]")
+    
+    # Web search toggle with state persistence
+    web_search = st.sidebar.toggle('Enable Web Search 🔍', value=ss.use_web_search, key='web_search_toggle', help="Enhance responses with web search")
+    if web_search != ss.use_web_search:
+        ss.use_web_search = web_search
+        st.rerun()
     st.sidebar.markdown(f"**Framework:** :blue[{ss.active_framework}]")
-    
-    # Add web search toggle
-    ss.use_web_search = st.sidebar.toggle("Enable Web Search", value=ss.use_web_search, help="Enhance responses with web search")
-    
-    # Intermediate steps are kept but hidden from users
-    ss.show_intermediate_steps = False
-    
     st.sidebar.divider()
     st.sidebar.markdown("### :blue[Select Chat] 📚")
-
-   
-
     col1, col2 = st.sidebar.columns([7, 1])
-
-    # Create and sense if clicked the default chat (Scratch Pad) And the clear button for Scratch Pad
     with col1:
         if st.button("💬 Scratch Pad", key="default_chat", use_container_width=True):
             ss.active_chat = ss.db.chats.find_one({"name": "Scratch Pad"})
@@ -186,11 +180,15 @@ def get_chat_response():
     if ss.use_web_search and last_user_message:
         web_results = search_web(last_user_message["content"])
         if web_results:
-            context_message = {
-                "role": "system",
-                "content": f"Additional context from web search: {web_results}"
+            # Add web search results as a separate message
+            search_message = {
+                "role": "assistant",
+                "content": "🔍 Web Search Results:\n" + web_results,
+                "timestamp": time(),
+                "is_search_result": True  # Mark this as a search result
             }
-            messages.append(context_message)
+            # Add to messages list
+            messages.append(search_message)
 
     # Get the current model information
     model_info = ss.db.models.find_one({"name": fresh_chat["model"]})
@@ -222,11 +220,11 @@ def get_chat_response():
             model=fresh_chat["model"],
             temperature=temperature,
             top_p=top_p
-        )
-        
+        )  
     except ImportError:
         st.error(f"Framework module for '{framework_name}' not found")
         return None
+
     except Exception as e:
         st.error(f"Error processing chat: {str(e)}")
         return None
@@ -242,9 +240,22 @@ def get_chat_response():
     completion_tokens = result["completion_tokens"]
     elapsed_time = result.get("elapsed_time", time() - start_time)
     
-    # Add the response to the chat history
-    message = {"role": "assistant", "content": content, "timestamp": time()}
-    ss.db.chats.update_one({"name": ss.active_chat['name']}, {"$push": {"messages": message}})
+    # Prepare both messages for the chat history
+    messages_to_add = []
+    
+    # If we had search results, add them first
+    if web_results:
+        messages_to_add.append(search_message)
+    
+    # Add the AI response
+    response_message = {"role": "assistant", "content": content, "timestamp": time()}
+    messages_to_add.append(response_message)
+    
+    # Update MongoDB with all new messages
+    ss.db.chats.update_one(
+        {"name": ss.active_chat['name']}, 
+        {"$push": {"messages": {"$each": messages_to_add}}}
+    )
     
     # Calculate cost based on token usage
     tokens = prompt_tokens + completion_tokens
@@ -264,16 +275,15 @@ def get_chat_response():
     }
 
 def render_chat_tab():
-    message_container = st.container(height=500, border=True)
-    # Refresh active_chat to get the latest messages
+    message_container = st.container(height=565, border=True)
     ss.active_chat = ss.db.chats.find_one({"name": ss.active_chat['name']})
     update_active_framework()
     messages = ss.active_chat.get("messages", [])
+
     for msg in messages:
         avatar = ss.llm_avatar if msg["role"] == "assistant" else ss.user_avatar
         with message_container.chat_message(msg["role"], avatar=avatar):
             st.markdown(msg["content"])
-
     prompt = st.chat_input("Type your message...")
     if prompt:
         message = {"role": "user","content": prompt,"timestamp": time()}
@@ -284,8 +294,20 @@ def render_chat_tab():
         with message_container.chat_message("user", avatar=ss.user_avatar):
             st.markdown(prompt)
         if response_data := get_chat_response():
-            with message_container.chat_message("assistant", avatar=ss.llm_avatar):
-                st.markdown(response_data["text"])
+            # Display any new messages that were added (search results and AI response)
+            fresh_chat = ss.db.chats.find_one({"name": ss.active_chat['name']})
+            # Get the last 2 messages if we have search results (identified by is_search_result flag)
+            last_messages = fresh_chat["messages"][-2:]
+            has_search = any(msg.get("is_search_result") for msg in last_messages)
+            new_messages = last_messages if has_search else fresh_chat["messages"][-1:]
+            
+            for msg in new_messages:
+                if msg.get("is_search_result"):
+                    with message_container.chat_message("assistant", avatar="🔍"):
+                        st.markdown(msg["content"])
+                else:
+                    with message_container.chat_message("assistant", avatar=ss.llm_avatar):
+                        st.markdown(msg["content"])
             # Refresh the active_chat after getting response
             ss.active_chat = ss.db.chats.find_one({"name": ss.active_chat['name']})
             update_active_framework()
