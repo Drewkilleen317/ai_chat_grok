@@ -35,7 +35,7 @@ def initialize():
     ss.active_chat = ss.db.chats.find_one({"name": "Scratch Pad"})
     active_model_name = ss.active_chat.get("model")
     model_info = ss.db.models.find_one({"name": active_model_name})
-    ss.active_framework = model_info.get("framework")
+    ss.active_framework = model_info.get("framework") if model_info else None
 
 def get_friendly_time(seconds_ago):
     time_actions = {
@@ -56,7 +56,7 @@ def update_active_framework():
     if 'active_chat' in ss and ss.active_chat:
         active_model_name = ss.active_chat.get("model")
         model_info = ss.db.models.find_one({"name": active_model_name})
-        ss.active_framework = model_info.get("framework")
+        ss.active_framework = model_info.get("framework") if model_info else None
 
 def search_web(query):
     try:
@@ -229,9 +229,14 @@ def get_chat_response():
         st.error(f"Error processing chat: {str(e)}")
         return None
 
+    # If the framework returned None (indicating an error)
+    if result is None:
+        st.error("Failed to get response from the model. Please check the framework configuration or API key.")
+        return None
+        
     # If the framework returned an error
-    if "error" in result:
-        st.error(f"API Error: {result.get('error')}")
+    if isinstance(result, dict) and "error" in result:
+        st.error(f"Error from {framework_name} framework: {result['error']}")
         return None
     
     # Extract the response content
@@ -517,6 +522,7 @@ def render_models_tab():
                         # Insert new model
                         ss.db.models.insert_one(new_model)
                         st.success(f"Model '{model_name}' added successfully!")
+                        st.rerun()
     
     # Edit Model functionality
     if model_action == "Edit":
@@ -688,8 +694,6 @@ def render_models_tab():
                             else:
                                 st.error(f"Could not delete model '{model_to_delete}'.")
 
-    st.divider()
-
 def render_prompts_tab():
     st.markdown("### System Prompt Management 📝")
     
@@ -839,6 +843,75 @@ def render_publish_tab():
     
     st.info("We're working on transforming your chats into polished, professional content!")
 
+def manage_frameworks():
+    """Manage frameworks in the database."""
+    st.header("Manage Frameworks")
+    st.markdown("Add, edit, or delete frameworks for LLM providers.")
+    
+    # Tabs for different actions
+    tab1, tab2 = st.tabs(["Add Framework", "View & Edit Frameworks"])
+    
+    with tab1:
+        with st.form(key="add_framework_form", clear_on_submit=True):
+            st.subheader("Add New Framework")
+            name = st.text_input("Framework Name", help="Internal name used in code (e.g., 'gemini')")
+            display_name = st.text_input("Display Name", help="User-friendly name (e.g., 'Gemini')")
+            api_url = st.text_input("API Base URL", help="Single base URL for API calls (e.g., 'https://api.google.com/gemini/v1'). Must start with http:// or https://")
+            api_key_ref = st.text_input("API Key Environment Variable", help="Name of env variable holding the API key (e.g., 'GEMINI_API_KEY')")
+            
+            if st.form_submit_button("Add Framework"):
+                if not name or not display_name or not api_url or not api_key_ref:
+                    st.error("All fields are required.")
+                elif not (api_url.startswith('http://') or api_url.startswith('https://')):
+                    st.error("API URL must start with http:// or https://")
+                elif ss.db.frameworks.find_one({"name": name}):
+                    st.error(f"Framework with name '{name}' already exists.")
+                else:
+                    framework_data = {
+                        "name": name,
+                        "display_name": display_name,
+                        "api_url": api_url,
+                        "api_key_ref": api_key_ref
+                    }
+                    ss.db.frameworks.insert_one(framework_data)
+                    st.success(f"Framework '{display_name}' added successfully!")
+                    st.rerun()
+    
+    with tab2:
+        st.subheader("Existing Frameworks")
+        frameworks = list(ss.db.frameworks.find({}, {"_id": 0}))
+        if not frameworks:
+            st.info("No frameworks found in the database.")
+        else:
+            for fw in frameworks:
+                with st.expander(f"{fw.get('display_name', 'Unnamed Framework')} ({fw.get('name', 'Unknown')})"):
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.markdown(f"**API URL:** {fw.get('api_url', 'Not specified')}")
+                        st.markdown(f"**API Key Ref:** {fw.get('api_key_ref', 'Not specified')}")
+                    with col2:
+                        if st.button("Delete", key=f"delete_fw_{fw.get('name', 'unknown')}"):
+                            ss.db.frameworks.delete_one({"name": fw.get('name', 'unknown')})
+                            st.success(f"Framework '{fw.get('display_name', 'Unnamed Framework')}' deleted.")
+                            st.rerun()
+                    
+                    # Edit form
+                    with st.form(key=f"edit_framework_{fw.get('name', 'unknown')}", clear_on_submit=True):
+                        edit_display_name = st.text_input("Display Name", value=fw.get('display_name', ''))
+                        edit_api_url = st.text_input("API URL", value=fw.get('api_url', ''))
+                        edit_api_key_ref = st.text_input("API Key Ref", value=fw.get('api_key_ref', ''))
+                        if st.form_submit_button("Update Framework"):
+                            ss.db.frameworks.update_one(
+                                {"name": fw.get('name', 'unknown')},
+                                {"$set": {
+                                    "display_name": edit_display_name,
+                                    "api_url": edit_api_url,
+                                    "api_key_ref": edit_api_key_ref
+                                }}
+                            )
+                            st.success(f"Framework '{edit_display_name}' updated!")
+                            st.rerun()
+
 def manage_menu():
     tab_actions = {
         "💬 Chat": render_chat_tab,
@@ -846,7 +919,8 @@ def manage_menu():
         "🗂️ Archive": render_archive_tab,
         "🤖 Models": render_models_tab,
         "📝 Prompts": render_prompts_tab,
-        "📢 Publish": render_publish_tab
+        "📢 Publish": render_publish_tab,
+        "🔩 Frameworks": manage_frameworks
     }
     
     tabs = st.tabs(list(tab_actions.keys()))
@@ -863,4 +937,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
