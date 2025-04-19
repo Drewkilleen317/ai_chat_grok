@@ -234,17 +234,24 @@ def get_chat_response():
     if result is None:
         st.error("Failed to get response from the model. Please check the framework configuration or API key.")
         return None
-        
+
     # If the framework returned an error
     if isinstance(result, dict) and "error" in result:
         st.error(f"Error from {framework_name} framework: {result['error']}")
         return None
-    
+
+    # Defensive: ensure required keys are present
+    required_keys = ["content", "prompt_tokens", "completion_tokens", "elapsed_time"]
+    for k in required_keys:
+        if k not in result:
+            st.error(f"Framework '{framework_name}' returned incomplete response (missing {k}).")
+            return None
+
     # Extract the response content
     content = result["content"]
     prompt_tokens = result["prompt_tokens"]
     completion_tokens = result["completion_tokens"]
-    elapsed_time = result.get("elapsed_time", time() - start_time)
+    elapsed_time = result["elapsed_time"]
     
     # Prepare both messages for the chat history
     messages_to_add = []

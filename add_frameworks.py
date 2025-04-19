@@ -59,6 +59,14 @@ def add_frameworks():
             "base_url": "https://api.groq.com/openai/v1/chat/completions",
             "api_key_name": "GROQ_API_KEY",
             "created_at": time()
+        },
+        {
+            "name": "llama",
+            "display_name": "Llama 4",
+            "description": "Meta's official Llama 4 models via Meta Cloud API.",
+            "base_url": "https://api.meta.ai/v1/chat/completions",  # Placeholder, update if needed
+            "api_key_name": "LLAMA4_API_KEY",
+            "created_at": time()
         }
     ]
     
